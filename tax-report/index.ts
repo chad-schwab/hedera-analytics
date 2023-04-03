@@ -56,7 +56,7 @@ if (process.env.LOG_LEVEL !== "debug") {
   console.debug = () => {};
 }
 
-const baseDir = path.join(__dirname, "output", "tax-report");
+const baseDir = path.join(__dirname, "..", "output", "tax-report");
 const archiveTransactionsFileName = "transaction-archive.json";
 function getRunDir(year: number, account: string) {
   return path.join(baseDir, year.toString(), account);
