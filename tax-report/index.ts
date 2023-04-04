@@ -473,17 +473,17 @@ program
     "A source file or directory to use for transactions. This should be a full path to all-transactions.json or a directory containing this file from previous run. This will fine the most recent all-transactions if you don't specify the full path."
   )
   .option("-p, --previous", "Use the previous output as the source file. This is easier to use than specifying the source file explicitly")
-  .action(async (account: string, year: number, options: Partial<{ sourceFile: string; previous: boolean }>) => {
+  .option("-o, --overrideDataStart <string>", "Override the start date, ISO string", (d) => new Date(d))
+  .action(async (account: string, year: number, options: Partial<{ sourceFile: string; previous: boolean; overrideDataStart: Date }>) => {
     const reportStartDate = new Date(`${year}-01-01T00:00:00.000Z`);
     const reportEndDate = new Date(`${year}-12-31T23:59:59.999Z`);
-    const dataStartDate = new Date(`${year - 2}-01-01T00:00:00.000Z`);
-    if (options.previous) {
-      options.sourceFile = getRunDir(year, account);
-    }
+    const dataStartDate = options.overrideDataStart ?? new Date(`${year - 2}-01-01T00:00:00.000Z`);
+    let sourceFile = options.previous ? getRunDir(year, account) : options.sourceFile;
+    console.info("Running tax-report", { sourceFile, reportStartDate, reportEndDate, dataStartDate });
     try {
       const endTimestamp = dateToHederaTs(reportEndDate, true);
 
-      let loadedTransactions: LoadedTransaction[] = await loadAllTransactions(account, dataStartDate, endTimestamp, options.sourceFile);
+      let loadedTransactions: LoadedTransaction[] = await loadAllTransactions(account, dataStartDate, endTimestamp, sourceFile);
       // loaded transactions are mutated during processing, so write them to disc first
       const directories = await prepareOutDirectories(year, loadedTransactions, account);
 
