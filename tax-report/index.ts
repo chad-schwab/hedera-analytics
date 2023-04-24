@@ -538,6 +538,7 @@ program
         );
 
       await Promise.all([
+        writeCsv(account, loadedTransactions, path.join(directories.allTimeDir, "all-transactions.csv")),
         writeCsv(account, vanillaTransactions, path.join(directories.allTimeDir, "vanilla-transactions.csv"), { omitNfts: true, omitTokens: true }),
         writeCsv(account, Object.values(transactionsByToken).flat(), path.join(directories.allTimeDir, "token-transactions.csv"), {
           omitStakingRewards: true,
