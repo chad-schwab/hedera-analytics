@@ -6,6 +6,8 @@ import { callMirror, configure, MirrorResponse, Network } from "lworks-client";
 
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFile, writeFileSync } from "node:fs";
 import path from "node:path";
+import { LoadedNftTransfer, LoadedTokenTransfer, RawLoadedTransaction, LoadedTransaction } from "./types";
+import { writeCsv } from "./csv";
 
 dotenv.config();
 
@@ -20,38 +22,6 @@ type TokenInfo = MirrorResponse.Schemas["TokenInfo"];
 type ExchangeRateResponse = MirrorResponse.Schemas["NetworkExchangeRateSetResponse"];
 type ExchangeRate = MirrorResponse.Schemas["ExchangeRate"];
 
-type LoadedTokenTransfer = {
-  tokenId: string;
-  account: string;
-  decimalAmount: number;
-  tokenName: string;
-  tokenSymbol: string;
-};
-type LoadedNftTransfer = {
-  tokenId: string;
-  serialNumber: number;
-  receiverAccount: string;
-  senderAccount: string;
-  tokenName: string;
-  tokenSymbol: string;
-};
-type LoadedTransaction = {
-  transactionId: string;
-  timestamp: Date;
-  memo: string;
-  hbarToAccount: string[];
-  hbarFromAccount: string[];
-  hbarTransfer: number;
-  stakingReward: number;
-  exchangeRate: number;
-  tokenTransfers: LoadedTokenTransfer[];
-  nftTransfers: LoadedNftTransfer[];
-  consensusTimestamp: string;
-  _aggregated?: boolean;
-  _splitNfts?: boolean;
-  _attributedNft?: string;
-};
-
 if (process.env.LOG_LEVEL !== "debug") {
   console.debug = () => {};
 }
@@ -61,7 +31,7 @@ const archiveTransactionsFileName = "transaction-archive.json";
 function getRunDir(year: number, account: string) {
   return path.join(baseDir, year.toString(), account);
 }
-async function prepareOutDirectories(year: number, loadedTransactions: LoadedTransaction[], account: string) {
+async function prepareOutDirectories(year: number, loadedTransactions: RawLoadedTransaction[], account: string) {
   const outputDir = path.join(getRunDir(year, account), new Date().toISOString());
   const allTimeDir = path.join(outputDir, "all-time");
   const soldTokensDir = path.join(outputDir, "sold-tokens");
@@ -204,7 +174,7 @@ function attributeNftNonTransferTransactions(
   });
 }
 
-async function loadTransactions(accountId: string, items: Transaction[]): Promise<LoadedTransaction[]> {
+async function loadTransactions(accountId: string, items: Transaction[]): Promise<RawLoadedTransaction[]> {
   return Promise.all(
     items.map(async (i) => {
       let tokenTransfers: LoadedTokenTransfer[] = [];
@@ -261,74 +231,9 @@ async function loadTransactions(accountId: string, items: Transaction[]): Promis
   );
 }
 
-function writeCsv(
-  accountId: string,
-  transactions: LoadedTransaction[],
-  fileName: string,
-  { omitTokens = false, omitNfts = false, omitStakingRewards = false } = {}
-): Promise<void> {
-  const transformedItems = transactions.map((i) => {
-    const transactionId = i.transactionId;
-    const usd = i.hbarTransfer * i.exchangeRate;
-    return {
-      Year: i.timestamp.getFullYear(),
-      Date: i.timestamp.toLocaleString().replaceAll(",", ""),
-      Memo: i.memo,
-      "Hbar G/L": i.hbarTransfer,
-      "Sales Proceed": usd > 0 ? usd : 0,
-      "Cost Basis": usd < 0 ? usd : 0,
-      "G/L": usd,
-      ...(omitStakingRewards ? undefined : { "Hbar Staking Reward": i.stakingReward, "Staking Reward USD": i.stakingReward * i.exchangeRate }),
-      "Hbar From Accounts": i.hbarFromAccount.join(","),
-      "Hbar To Accounts": i.hbarToAccount.join(","),
-      ...(omitTokens
-        ? undefined
-        : {
-            "Token ID": i.tokenTransfers.map((t) => t.tokenId).join(", "),
-            "Token Name": i.tokenTransfers.map((t) => t.tokenName).join(", "),
-            "Token Symbol": i.tokenTransfers.map((t) => t.tokenSymbol).join(", "),
-            "Token G/L": i.tokenTransfers.map((t) => t.decimalAmount).join(", "),
-          }),
-      ...(omitNfts
-        ? undefined
-        : {
-            "Token ID": i.nftTransfers.map((t) => t.tokenId).join(", ") || i._attributedNft?.split(":")?.at(0),
-            Serial: i.nftTransfers.map((t) => t.serialNumber).join(", ") || i._attributedNft?.split(":")?.at(1),
-            NFT: i.nftTransfers.map((t) => `${t.tokenId}:${t.serialNumber}`).join(", ") || i._attributedNft,
-            "NFT Name": i.nftTransfers.map((t) => t.tokenName).join(", "),
-            "NFT Symbol": i.nftTransfers.map((t) => t.tokenSymbol).join(", "),
-            "NFT Sold?": i.nftTransfers.map((t) => t.senderAccount === accountId).join(", "),
-          }),
-      explore: `https://explore.lworks.io/mainnet/transactions/${transactionId}`,
-      multiTokenTransaction: i.nftTransfers.length + i.tokenTransfers.length > 1,
-      exchangeRate: i.exchangeRate,
-      aggregated: i._aggregated ?? false,
-      splitNfts: i._splitNfts ?? false,
-      ["UTC"]: i.timestamp.toISOString(),
-    };
-  });
-
-  return new Promise((res, rej) => {
-    stringify(transformedItems, { header: true }, (e, output) => {
-      if (e) {
-        console.error("Error writing CSV: ", fileName);
-        rej(e);
-      }
-      writeFile(fileName, output, (err) => {
-        if (err) {
-          rej(err);
-          return;
-        }
-        console.info(fileName);
-        res();
-      });
-    });
-  });
-}
-
 async function loadAllTransactions(account: string, dataStartDate: Date, endTimestamp: string, sourceFile: string | undefined) {
   let dataStartTs = dateToHederaTs(dataStartDate, false);
-  let loadedTransactions: LoadedTransaction[] = [];
+  let loadedTransactions: RawLoadedTransaction[] = [];
   if (sourceFile) {
     if (!sourceFile.endsWith(archiveTransactionsFileName)) {
       sourceFile = findLastModifiedFileByName(sourceFile, archiveTransactionsFileName);
@@ -337,7 +242,7 @@ async function loadAllTransactions(account: string, dataStartDate: Date, endTime
       }
       console.info(`Using source file: ${sourceFile}`);
     }
-    loadedTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as LoadedTransaction[];
+    loadedTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as RawLoadedTransaction[];
     loadedTransactions.forEach((l) => {
       l.timestamp = new Date(l.timestamp);
       if (typeof l.hbarFromAccount === "string") {
@@ -378,7 +283,7 @@ async function loadAllTransactions(account: string, dataStartDate: Date, endTime
 /**
  * for aggregate transactions, we don't care about multi-hop token transfers that zero out
  */
-function removeMultiHopTokenTransfers(aggregate: LoadedTransaction) {
+function removeMultiHopTokenTransfers(aggregate: RawLoadedTransaction) {
   const tokenTransferAmountByAccountToken = new Map<string, LoadedTokenTransfer>();
   aggregate.tokenTransfers.forEach((t) => {
     const key = `${t.account}:${t.tokenId}`;
@@ -397,9 +302,9 @@ function removeMultiHopTokenTransfers(aggregate: LoadedTransaction) {
  *  combines transactions with the same transaction id, e.g. contract calls
  *  this function mutates the underlying transactions for performance
  */
-function aggregateSmartContractTransactions(loadedTransactions: LoadedTransaction[]): LoadedTransaction[] {
-  let aggregatedTransactions: LoadedTransaction[] = [];
-  let currentAggregate: LoadedTransaction | null = null;
+function aggregateSmartContractTransactions(loadedTransactions: RawLoadedTransaction[]): RawLoadedTransaction[] {
+  let aggregatedTransactions: RawLoadedTransaction[] = [];
+  let currentAggregate: RawLoadedTransaction | null = null;
   loadedTransactions.forEach((t) => {
     if (!currentAggregate) {
       currentAggregate = t;
@@ -442,24 +347,21 @@ function aggregateSmartContractTransactions(loadedTransactions: LoadedTransactio
 /**
  * This splits apart transactions involving multiple NFTs so we can attribute crypto transfers to each serial. A simple average is used for attribution
  */
-function splitMultiNftTransferTransactions(loadedTransactions: LoadedTransaction[]): LoadedTransaction[] {
+function splitMultiNftTransferTransactions(loadedTransactions: RawLoadedTransaction[]): LoadedTransaction[] {
   return loadedTransactions
     .map((t) => {
       const numberOfSplits = t.nftTransfers.length;
-      if (numberOfSplits > 1) {
-        return t.nftTransfers.map(
-          (nt) =>
-            ({
-              ...t,
-              hbarTransfer: t.hbarTransfer / numberOfSplits,
-              stakingReward: t.stakingReward / numberOfSplits,
-              tokenTransfers: t.tokenTransfers.map((tt) => ({ ...tt, decimalAmount: tt.decimalAmount / numberOfSplits } as LoadedTokenTransfer)),
-              nftTransfers: [nt],
-              _splitNfts: true,
-            } as LoadedTransaction)
-        );
+      if (numberOfSplits <= 1) {
+        return { ...t, nftTransfers: undefined, nftTransfer: t.nftTransfers[0] };
       }
-      return [t];
+      return t.nftTransfers.map((nt) => ({
+        ...t,
+        hbarTransfer: t.hbarTransfer / numberOfSplits,
+        stakingReward: t.stakingReward / numberOfSplits,
+        tokenTransfers: t.tokenTransfers.map((tt) => ({ ...tt, decimalAmount: tt.decimalAmount / numberOfSplits } as LoadedTokenTransfer)),
+        nftTransfer: nt,
+        _splitNfts: true,
+      }));
     })
     .flat();
 }
@@ -483,66 +385,83 @@ program
     try {
       const endTimestamp = dateToHederaTs(reportEndDate, true);
 
-      let loadedTransactions: LoadedTransaction[] = await loadAllTransactions(account, dataStartDate, endTimestamp, sourceFile);
+      let rawLoadedTransactions: RawLoadedTransaction[] = await loadAllTransactions(account, dataStartDate, endTimestamp, sourceFile);
       // loaded transactions are mutated during processing, so write them to disc first
-      const directories = await prepareOutDirectories(year, loadedTransactions, account);
+      const directories = await prepareOutDirectories(year, rawLoadedTransactions, account);
 
       const transactionsByToken: Record<string, LoadedTransaction[]> = {};
       const transactionsByNft: Record<string, Record<number, LoadedTransaction[]>> = {};
-      loadedTransactions = aggregateSmartContractTransactions(loadedTransactions);
-      loadedTransactions = splitMultiNftTransferTransactions(loadedTransactions);
+      rawLoadedTransactions = aggregateSmartContractTransactions(rawLoadedTransactions);
+      const loadedTransactions = splitMultiNftTransferTransactions(rawLoadedTransactions);
 
       let vanillaTransactions: LoadedTransaction[] = [];
       loadedTransactions.forEach((t) => {
-        if (!t.tokenTransfers.length && !t.nftTransfers.length) {
+        if (!t.tokenTransfers.length && !t.nftTransfer) {
           vanillaTransactions.push(t);
-        } else {
+        }
+        if (t.nftTransfer) {
+          if (!transactionsByNft[t.nftTransfer.tokenId]) {
+            transactionsByNft[t.nftTransfer.tokenId] = {};
+          }
+          transactionsByNft[t.nftTransfer.tokenId][t.nftTransfer.serialNumber] = [
+            ...(transactionsByNft[t.nftTransfer.tokenId][t.nftTransfer.serialNumber] ?? []),
+            t,
+          ];
+        }
+        if (t.tokenTransfers.length) {
           t.tokenTransfers.forEach((t1) => (transactionsByToken[t1.tokenId] = [...(transactionsByToken[t1.tokenId] ?? []), t]));
-          t.nftTransfers.forEach((t1) => {
-            if (!transactionsByNft[t1.tokenId]) {
-              transactionsByNft[t1.tokenId] = {};
-            }
-            transactionsByNft[t1.tokenId][t1.serialNumber] = [...(transactionsByNft[t1.tokenId][t1.serialNumber] ?? []), t];
-          });
         }
       });
 
-      const isInTaxYear = (t: LoadedTransaction) => t.timestamp >= reportStartDate && t.timestamp <= reportEndDate;
+      const isInTaxYear = (t: { timestamp: Date }) => t.timestamp >= reportStartDate && t.timestamp <= reportEndDate;
       vanillaTransactions = attributeNftNonTransferTransactions(vanillaTransactions, transactionsByNft);
       const loadedTransactionsInTaxYear = loadedTransactions.filter(isInTaxYear);
       const vanillaTransactionsInTaxYear = vanillaTransactions.filter(isInTaxYear);
       const soldTokens = Object.entries(transactionsByToken)
-        .map(([tokenId, transactions]) => ({ tokenId, transactions }))
+        .map(([tokenId, transactions]) => ({
+          tokenId,
+          transactions,
+          tokenSymbol: transactions[0].tokenTransfers.find((t) => t.tokenId === tokenId).tokenSymbol,
+        }))
         .filter(({ tokenId, transactions }) =>
           transactions.filter(isInTaxYear).find(
             (t1) =>
               // Did we send tokens and did we get paid for it
               t1.tokenTransfers.find((t2) => t2.tokenId === tokenId && t2.decimalAmount < 0) && t1.hbarTransfer > 1
           )
-        );
+        )
+        .sort((t1, t2) => t1.tokenSymbol.localeCompare(t2.tokenSymbol));
       const soldNfts = Object.entries(transactionsByNft)
         .flatMap(([tokenId, transactionsBySerial]) =>
           Object.entries(transactionsBySerial).map(([serialNumber, transactions]) => ({
             tokenId,
             serialNumber: parseInt(serialNumber, 10),
             transactions,
+            tokenSymbol: transactions.find((n) => n.nftTransfer)?.nftTransfer.tokenSymbol ?? "unknown",
           }))
         )
         .filter(({ tokenId, serialNumber, transactions }) =>
           transactions.filter(isInTaxYear).find(
             (t1) =>
               // Did we send an NFT and did we get paid for it?
-              t1.nftTransfers.find((t2) => t2.tokenId === tokenId && t2.serialNumber === serialNumber && t2.senderAccount === account) &&
+              t1.nftTransfer &&
+              t1.nftTransfer.tokenId === tokenId &&
+              t1.nftTransfer.serialNumber === serialNumber &&
+              t1.nftTransfer.senderAccount === account &&
               t1.hbarTransfer > 1
           )
         );
 
       await Promise.all([
         writeCsv(account, loadedTransactions, path.join(directories.allTimeDir, "all-transactions.csv")),
-        writeCsv(account, vanillaTransactions, path.join(directories.allTimeDir, "vanilla-transactions.csv"), { omitNfts: true, omitTokens: true }),
+        writeCsv(account, vanillaTransactions, path.join(directories.allTimeDir, "vanilla-transactions.csv"), {
+          nftStrategy: { strategy: "omit" },
+          tokenStrategy: { strategy: "omit" },
+        }),
         writeCsv(account, Object.values(transactionsByToken).flat(), path.join(directories.allTimeDir, "token-transactions.csv"), {
-          omitStakingRewards: true,
-          omitNfts: true,
+          stakingStrategy: { strategy: "omit" },
+          nftStrategy: { strategy: "omit" },
+          tokenStrategy: { strategy: "column", allTokens: soldTokens },
         }),
         writeCsv(
           account,
@@ -550,33 +469,37 @@ program
             .map((t) => Object.values(t))
             .flat(2),
           path.join(directories.allTimeDir, "nft-transactions.csv"),
-          { omitStakingRewards: true, omitTokens: true }
+          { stakingStrategy: { strategy: "omit" }, tokenStrategy: { strategy: "omit" } }
         ),
         writeCsv(account, vanillaTransactionsInTaxYear, path.join(directories.outputDir, "vanilla-transactions.csv"), {
-          omitNfts: true,
-          omitTokens: true,
+          nftStrategy: { strategy: "omit" },
+          tokenStrategy: { strategy: "omit" },
         }),
         writeCsv(account, loadedTransactionsInTaxYear, path.join(directories.outputDir, "all-transactions.csv")),
-        ...soldTokens.map(({ tokenId, transactions }) =>
-          writeCsv(account, transactions, path.join(directories.soldTokensDir, `${tokenId}.csv`), { omitStakingRewards: true, omitNfts: true })
+        ...soldTokens.map(({ tokenId, tokenSymbol, transactions }) =>
+          writeCsv(account, transactions, path.join(directories.soldTokensDir, `${tokenSymbol}-${tokenId}.csv`), {
+            stakingStrategy: { strategy: "omit" },
+            nftStrategy: { strategy: "omit" },
+            tokenStrategy: { strategy: "column", allTokens: soldTokens, targetTokenId: tokenId },
+          })
         ),
         writeCsv(
           account,
           soldTokens.flatMap((t) => t.transactions).sort((t1, t2) => t1.consensusTimestamp.localeCompare(t2.consensusTimestamp)),
           path.join(directories.soldTokensDir, "all.csv"),
-          { omitStakingRewards: true, omitNfts: true }
+          { stakingStrategy: { strategy: "omit" }, nftStrategy: { strategy: "omit" }, tokenStrategy: { strategy: "column", allTokens: soldTokens } }
         ),
         ...soldNfts.map(
-          ({ tokenId, serialNumber, transactions }) =>
-            writeCsv(account, transactions, path.join(directories.soldNftsDir, `${tokenId}:${serialNumber}.csv`), {
-              omitStakingRewards: true,
-              omitTokens: true,
+          ({ tokenSymbol, tokenId, serialNumber, transactions }) =>
+            writeCsv(account, transactions, path.join(directories.soldNftsDir, `${tokenSymbol}-${tokenId}:${serialNumber}.csv`), {
+              stakingStrategy: { strategy: "omit" },
+              tokenStrategy: { strategy: "omit" },
             }),
           writeCsv(
             account,
             soldNfts.flatMap((t) => t.transactions).sort((t1, t2) => t1.consensusTimestamp.localeCompare(t2.consensusTimestamp)),
             path.join(directories.soldNftsDir, "all.csv"),
-            { omitStakingRewards: true, omitTokens: true }
+            { stakingStrategy: { strategy: "omit" }, tokenStrategy: { strategy: "omit" } }
           )
         ),
       ]);
