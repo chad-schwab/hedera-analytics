@@ -1,138 +1,37 @@
 import { AccountId } from "@hashgraph/sdk";
 import { program } from "commander";
-import { stringify } from "csv-stringify";
 import dotenv from "dotenv";
-import { callMirror, configure, MirrorResponse, Network } from "lworks-client";
+import { callMirror, configure, Environment, Network } from "lworks-client";
 
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFile, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { LoadedNftTransfer, LoadedTokenTransfer, RawLoadedTransaction, LoadedTransaction } from "./types";
 import { writeCsv } from "./csv";
+import { getHederaExchangeRate } from "./get-hedera-exchange-rate";
+import { getHederaToken } from "./get-hedera-token";
+import { getSourceFile } from "./get-source-file";
+import { dateToHederaTs, hederaTsToDate, tinyToHbar } from "./hedera-utils";
+import { prepareOutDirectories } from "./prepare-out-directory";
+import {
+  LoadedNftTransfer,
+  LoadedTokenTransfer,
+  LoadedTransaction,
+  RawLoadedTransaction,
+  Transaction,
+  TransactionByIdResponse,
+  TransactionsResponse,
+} from "./types";
 
 dotenv.config();
+//https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
 
 program.name("tax-report").description("CLI to load transaction tax information").version("0.0.1");
 
-configure({ network: Network.Mainnet, disableTracking: true });
-
-type Transaction = MirrorResponse.Schemas["Transaction"];
-type TransactionsResponse = MirrorResponse.Schemas["TransactionsResponse"];
-type TransactionByIdResponse = MirrorResponse.Schemas["TransactionByIdResponse"];
-type TokenInfo = MirrorResponse.Schemas["TokenInfo"];
-type ExchangeRateResponse = MirrorResponse.Schemas["NetworkExchangeRateSetResponse"];
-type ExchangeRate = MirrorResponse.Schemas["ExchangeRate"];
+configure({ environment: Environment.public, network: Network.Mainnet, disableTracking: true });
 
 if (process.env.LOG_LEVEL !== "debug") {
   console.debug = () => {};
 }
 
-const baseDir = path.join(__dirname, "..", "output", "tax-report");
-const archiveTransactionsFileName = "transaction-archive.json";
-function getRunDir(year: number, account: string) {
-  return path.join(baseDir, year.toString(), account);
-}
-async function prepareOutDirectories(year: number, loadedTransactions: RawLoadedTransaction[], account: string) {
-  const outputDir = path.join(getRunDir(year, account), new Date().toISOString());
-  const allTimeDir = path.join(outputDir, "all-time");
-  const soldTokensDir = path.join(outputDir, "sold-tokens");
-  const soldNftsDir = path.join(outputDir, "sold-nfts");
-  mkdirSync(outputDir, { recursive: true });
-  mkdirSync(allTimeDir);
-  mkdirSync(soldTokensDir);
-  mkdirSync(soldNftsDir);
-  writeFileSync(path.join(outputDir, archiveTransactionsFileName), JSON.stringify(loadedTransactions, null, 2));
-  return { outputDir, allTimeDir, soldTokensDir, soldNftsDir };
-}
-type FileInfo = {
-  filePath: string;
-  modifiedTime: number;
-};
-
-function findLastModifiedFileByName(directory: string, fileName: string): string | null {
-  let lastModified: FileInfo | null = null;
-  const files = readdirSync(directory);
-
-  for (const file of files) {
-    const filePath = path.join(directory, file);
-    const stat = statSync(filePath);
-
-    if (stat.isDirectory()) {
-      const nestedFile = findLastModifiedFileByName(filePath, fileName);
-
-      if (nestedFile) {
-        const modifiedTime = statSync(nestedFile).mtimeMs;
-
-        if (!lastModified || modifiedTime > lastModified.modifiedTime) {
-          lastModified = { filePath: nestedFile, modifiedTime };
-        }
-      }
-    } else if (file === fileName) {
-      const modifiedTime = stat.mtimeMs;
-
-      if (!lastModified || modifiedTime > lastModified.modifiedTime) {
-        lastModified = { filePath, modifiedTime };
-      }
-    }
-  }
-
-  return lastModified ? lastModified.filePath : null;
-}
-
-function dateToHederaTs(date: Date, maxNanos: boolean) {
-  const millisecondString = `${date.getTime()}`;
-  let hederaString = millisecondString.slice(0, millisecondString.length - 3) + "." + millisecondString.slice(millisecondString.length - 3);
-  if (maxNanos) {
-    hederaString += "999999";
-  } else {
-    hederaString += "000000";
-  }
-  return hederaString;
-}
-
-function hederaTsToDate(hederaTs: string) {
-  return new Date(parseInt(hederaTs.split(".")[0], 10) * 1000);
-}
-
-function tinyToHbar(tinyBar: number) {
-  return tinyBar / 100000000;
-}
-
-const tokenRequestCache: Record<string, Promise<TokenInfo>> = {};
-async function loadTokenInfo(tokenId: string) {
-  if (!tokenRequestCache[tokenId]) {
-    tokenRequestCache[tokenId] = callMirror<TokenInfo>(`/api/v1/tokens/${tokenId}`);
-  }
-  return tokenRequestCache[tokenId];
-}
-
-const getNearestMinute = (date: Date) => Math.floor(date.getTime() / 60_000);
-const getRate = (er: ExchangeRate) => 0.01 * (er.cent_equivalent / er.hbar_equivalent);
-let cachedExchangeRates: Record<number, Promise<ExchangeRateResponse>> = {};
-async function getExchangeRate(date: Date, recursed = false) {
-  const nearestMinute = getNearestMinute(date);
-  const nearestPreviousMinute = nearestMinute - 60;
-  const cachedRate = cachedExchangeRates[nearestMinute];
-  if (cachedRate) {
-    const currentRate = await cachedRate;
-    if (currentRate.current_rate) {
-      return getRate((await cachedRate).current_rate);
-    } else console.warn({ date, currentRate }, "exchange rate not found");
-  }
-  const cachedPreviousRate = cachedExchangeRates[nearestPreviousMinute];
-  if (cachedPreviousRate) {
-    const previousRate = await cachedPreviousRate;
-    if (previousRate.next_rate) {
-      return getRate(previousRate.next_rate);
-    }
-  }
-
-  if (recursed) {
-    throw new Error(`Failed to load exchange rate for ${date}`);
-  }
-
-  cachedExchangeRates[nearestMinute] = callMirror<ExchangeRateResponse>(`/api/v1/network/exchangerate?timestamp=${dateToHederaTs(date, false)}`);
-  return getExchangeRate(date, true);
-}
 function attributeNftNonTransferTransactions(
   vanillaTransactions: LoadedTransaction[],
   transactionsByNft: Record<string, Record<number, LoadedTransaction[]>>
@@ -181,7 +80,7 @@ async function loadTransactions(accountId: string, items: Transaction[]): Promis
       let nftTransfers: LoadedNftTransfer[] = [];
       const memo = Buffer.from(i.memo_base64, "base64").toString();
       if (i.token_transfers?.length) {
-        const tokenInfos = await Promise.all(i.token_transfers.map((t) => loadTokenInfo(t.token_id)));
+        const tokenInfos = await Promise.all(i.token_transfers.map((t) => getHederaToken(t.token_id)));
 
         tokenTransfers = i.token_transfers.map((t, i) => {
           const tokenInfo = tokenInfos[i];
@@ -197,7 +96,7 @@ async function loadTransactions(accountId: string, items: Transaction[]): Promis
       const response = await callMirror<TransactionByIdResponse>(`/api/v1/transactions/${i.transaction_id}`);
       const transactionNftTransfers = response.transactions?.filter((t) => t.nft_transfers?.length).flatMap((t) => t.nft_transfers);
       if (transactionNftTransfers?.length) {
-        const tokenInfos = await Promise.all(transactionNftTransfers.map((t) => loadTokenInfo(t.token_id)));
+        const tokenInfos = await Promise.all(transactionNftTransfers.map((t) => getHederaToken(t.token_id)));
 
         nftTransfers = transactionNftTransfers.map((t, i) => {
           const tokenInfo = tokenInfos[i];
@@ -222,7 +121,7 @@ async function loadTransactions(accountId: string, items: Transaction[]): Promis
         hbarTransfer: tinyToHbar(netTransfer),
         stakingReward: tinyToHbar(stakingReward),
         memo,
-        exchangeRate: await getExchangeRate(hederaTsToDate(i.consensus_timestamp)),
+        exchangeRate: await getHederaExchangeRate(hederaTsToDate(i.consensus_timestamp)),
         tokenTransfers: tokenTransfers.filter((t) => t.account === accountId),
         nftTransfers: nftTransfers.filter((t) => t.senderAccount === accountId || t.receiverAccount === accountId),
         consensusTimestamp: i.consensus_timestamp,
@@ -235,13 +134,6 @@ async function loadAllTransactions(account: string, dataStartDate: Date, endTime
   let dataStartTs = dateToHederaTs(dataStartDate, false);
   let loadedTransactions: RawLoadedTransaction[] = [];
   if (sourceFile) {
-    if (!sourceFile.endsWith(archiveTransactionsFileName)) {
-      sourceFile = findLastModifiedFileByName(sourceFile, archiveTransactionsFileName);
-      if (!sourceFile) {
-        throw new Error(`Unable to find deeply nested ${archiveTransactionsFileName} in directory: ${sourceFile}`);
-      }
-      console.info(`Using source file: ${sourceFile}`);
-    }
     loadedTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as RawLoadedTransaction[];
     loadedTransactions.forEach((l) => {
       l.timestamp = new Date(l.timestamp);
@@ -371,16 +263,16 @@ program
   .argument("<account>", "The account to fetch data for")
   .argument("<year>", "The tax year to fetch data for", (y) => parseInt(y, 10))
   .option(
-    "-s, --sourceFile <string>",
+    "-s, --sourcePath <string>",
     "A source file or directory to use for transactions. This should be a full path to all-transactions.json or a directory containing this file from previous run. This will fine the most recent all-transactions if you don't specify the full path."
   )
-  .option("-p, --previous", "Use the previous output as the source file. This is easier to use than specifying the source file explicitly")
+  .option("-p, --previousOutput", "Use the previous output as the source file. This is easier to use than specifying the source file explicitly")
   .option("-o, --overrideDataStart <string>", "Override the start date, ISO string", (d) => new Date(d))
-  .action(async (account: string, year: number, options: Partial<{ sourceFile: string; previous: boolean; overrideDataStart: Date }>) => {
+  .action(async (account: string, year: number, options: Partial<{ sourcePath: string; previousOutput: boolean; overrideDataStart: Date }>) => {
     const reportStartDate = new Date(`${year}-01-01T00:00:00.000Z`);
     const reportEndDate = new Date(`${year}-12-31T23:59:59.999Z`);
     const dataStartDate = options.overrideDataStart ?? new Date(`${year - 2}-01-01T00:00:00.000Z`);
-    let sourceFile = options.previous ? getRunDir(year, account) : options.sourceFile;
+    let sourceFile: string | undefined = getSourceFile(year, account, options);
     console.info("Running tax-report", { sourceFile, reportStartDate, reportEndDate, dataStartDate });
     try {
       const endTimestamp = dateToHederaTs(reportEndDate, true);

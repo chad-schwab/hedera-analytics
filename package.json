@@ -4,7 +4,7 @@
   "description": "",
   "main": "migrate-customers.js",
   "scripts": {
-    "tax-report": "node -r esbuild-runner/register tax-report"
+    "tax-report": "node -r esbuild-runner/register tax-report/program.ts"
   },
   "author": "",
   "license": "UNLICENSED",

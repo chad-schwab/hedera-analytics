@@ -1,3 +1,12 @@
+import { MirrorResponse } from "lworks-client";
+
+export type Transaction = MirrorResponse.Schemas["Transaction"];
+export type TransactionsResponse = MirrorResponse.Schemas["TransactionsResponse"];
+export type TransactionByIdResponse = MirrorResponse.Schemas["TransactionByIdResponse"];
+export type TokenInfo = MirrorResponse.Schemas["TokenInfo"];
+export type ExchangeRateResponse = MirrorResponse.Schemas["NetworkExchangeRateSetResponse"];
+export type ExchangeRate = MirrorResponse.Schemas["ExchangeRate"];
+
 export type LoadedTokenTransfer = {
   tokenId: string;
   account: string;
