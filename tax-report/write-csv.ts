@@ -1,11 +1,15 @@
-import { stringify } from "csv-stringify";
 import { writeFile } from "node:fs";
+
+import { stringify } from "csv-stringify";
+
+import { createLogger } from "../logger";
+
 import { LoadedTokenTransfer, LoadedTransaction } from "./types";
 
-export type TokenStrategy =
-  | { strategy: "omit" }
-  | { strategy: "join" }
-  | { strategy: "column"; allTokens: { tokenId: string; tokenSymbol: string }[]; targetTokenId?: string };
+const logger = createLogger("csv");
+
+type ColumnTokenStrategy = { strategy: "column"; allTokens: { tokenId: string; tokenSymbol: string }[]; targetTokenId?: string };
+export type TokenStrategy = { strategy: "omit" } | { strategy: "join" } | ColumnTokenStrategy;
 export type NftStrategy = { strategy: "omit" } | { strategy: "include" };
 export type StakingRewardStrategy = { strategy: "omit" } | { strategy: "include" };
 
@@ -15,8 +19,25 @@ type CsvOptions = Partial<{
   stakingStrategy: StakingRewardStrategy;
 }>;
 
+function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers: LoadedTokenTransfer[]) {
+  let { allTokens } = tokenStrategy;
+  if (tokenStrategy.targetTokenId) {
+    const foundTargetToken = allTokens.find((t) => t.tokenId === tokenStrategy.targetTokenId);
+    if (foundTargetToken) {
+      allTokens = [foundTargetToken, ...allTokens.filter((t) => t.tokenId !== tokenStrategy.targetTokenId)];
+    }
+  }
+  return allTokens.reduce((agg, token) => {
+    return {
+      ...agg,
+      [`${token.tokenSymbol}:${token.tokenId} G/L`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.decimalAmount,
+    };
+  }, {});
+}
+
 function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers: LoadedTokenTransfer[]) {
-  switch (tokenStrategy.strategy) {
+  const { strategy } = tokenStrategy;
+  switch (strategy) {
     case "omit":
       return undefined;
     case "join":
@@ -27,19 +48,9 @@ function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers:
         "Token G/L": tokenTransfers.map((t) => t.decimalAmount).join(", "),
       };
     case "column":
-      let allTokens = tokenStrategy.allTokens;
-      if (tokenStrategy.targetTokenId) {
-        const foundTargetToken = allTokens.find((t) => t.tokenId === tokenStrategy.targetTokenId);
-        if (foundTargetToken) {
-          allTokens = [foundTargetToken, ...allTokens.filter((t) => t.tokenId !== tokenStrategy.targetTokenId)];
-        }
-      }
-      return allTokens.reduce((agg, token) => {
-        return {
-          ...agg,
-          [`${token.tokenSymbol}:${token.tokenId} G/L`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.decimalAmount,
-        };
-      }, {});
+      return handleColumnStrategy(tokenStrategy, tokenTransfers);
+    default:
+      throw new Error(`Unhandled token strategy: ${strategy}`);
   }
 }
 
@@ -50,7 +61,7 @@ export function writeCsv(
   { tokenStrategy = { strategy: "join" }, nftStrategy = { strategy: "include" }, stakingStrategy = { strategy: "include" } }: CsvOptions = {}
 ): Promise<void> {
   const transformedItems = transactions.map((i) => {
-    const transactionId = i.transactionId;
+    const { transactionId } = i;
     const usd = i.hbarTransfer * i.exchangeRate;
     return {
       Year: i.timestamp.getFullYear(),
@@ -81,7 +92,7 @@ export function writeCsv(
       exchangeRate: i.exchangeRate,
       aggregated: i._aggregated ?? false,
       splitNfts: i._splitNfts ?? false,
-      ["UTC"]: i.timestamp.toISOString(),
+      UTC: i.timestamp.toISOString(),
     };
   });
 
@@ -96,7 +107,7 @@ export function writeCsv(
           rej(err);
           return;
         }
-        console.info(fileName);
+        logger.info(fileName);
         res();
       });
     });

@@ -1,12 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+
 import { RawLoadedTransaction } from "./types";
 
 const baseDir = path.join(__dirname, "..", "output", "tax-report");
 
 export const archiveFileName = "transaction-archive.json";
 
-export function getOutputBase(year: number, account: string) {
+export function getOutputBase(year: number, account: string): string {
   return path.join(baseDir, year.toString(), account);
 }
 

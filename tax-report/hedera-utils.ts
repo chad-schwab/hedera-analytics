@@ -1,6 +1,6 @@
 export function dateToHederaTs(date: Date, maxNanos: boolean) {
   const millisecondString = `${date.getTime()}`;
-  let hederaString = millisecondString.slice(0, millisecondString.length - 3) + "." + millisecondString.slice(millisecondString.length - 3);
+  let hederaString = `${millisecondString.slice(0, millisecondString.length - 3)}.${millisecondString.slice(millisecondString.length - 3)}`;
   if (maxNanos) {
     hederaString += "999999";
   } else {

@@ -1,14 +1,20 @@
 {
-  "include": ["**/*.ts", "kafka-client.js"],
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "isolatedModules": true,
+    "target": "es2021",
+    "strict": true,
+    "preserveConstEnums": true,
+    "noEmit": true,
+    "noEmitOnError": false,
+    "sourceMap": false,
+    "module": "ES2022",
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "moduleResolution": "node",
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "target": "ES2020",
-    "strict": false,
-    "noEmit": true
-  }
+    "typeRoots": ["typings/types", "node_modules/@types"],
+    "allowJs": true
+  },
+  "exclude": ["node_modules", "**/*.test.ts", "dist"]
 }

@@ -1,261 +1,60 @@
-import { AccountId } from "@hashgraph/sdk";
-import { program } from "commander";
-import dotenv from "dotenv";
-import { callMirror, configure, Environment, Network } from "lworks-client";
-
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { writeCsv } from "./csv";
-import { getHederaExchangeRate } from "./get-hedera-exchange-rate";
-import { getHederaToken } from "./get-hedera-token";
+
+import { program } from "commander";
+import dotenv from "dotenv";
+import { configure, Environment, Network } from "lworks-client";
+
+import { createLogger } from "../logger";
+
+import { writeCsv } from "./write-csv";
 import { getSourceFile } from "./get-source-file";
-import { dateToHederaTs, hederaTsToDate, tinyToHbar } from "./hedera-utils";
+import { dateToHederaTs } from "./hedera-utils";
 import { prepareOutDirectories } from "./prepare-out-directory";
-import {
-  LoadedNftTransfer,
-  LoadedTokenTransfer,
-  LoadedTransaction,
-  RawLoadedTransaction,
-  Transaction,
-  TransactionByIdResponse,
-  TransactionsResponse,
-} from "./types";
+import { LoadedTransaction, RawLoadedTransaction } from "./types";
+import { attributeNftNonTransferTransactions } from "./attribute-non-transfer-nft-transactions";
+import { loadTransactions } from "./load-transactions";
+import { aggregateSmartContractTransactions } from "./aggregate-smart-contract-transactions";
+import { re } from "./existence-util";
+import { splitBatchNftTransferTransactions } from "./split-batch-nft-transfer-transactions";
 
 dotenv.config();
-//https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
+// https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
 
 program.name("tax-report").description("CLI to load transaction tax information").version("0.0.1");
 
+export const logger = createLogger("tax-report");
+
 configure({ environment: Environment.public, network: Network.Mainnet, disableTracking: true });
 
-if (process.env.LOG_LEVEL !== "debug") {
-  console.debug = () => {};
-}
-
-function attributeNftNonTransferTransactions(
-  vanillaTransactions: LoadedTransaction[],
-  transactionsByNft: Record<string, Record<number, LoadedTransaction[]>>
-) {
-  const tokenRegExpMap = Object.keys(transactionsByNft).reduce((agg, tokenId) => {
-    agg.set(tokenId, {
-      tokenRegex: new RegExp(`[^\\d]${tokenId}[^\\d]`),
-      serialRegex: new RegExp(`|${tokenId}.(\\d+)`),
-    });
-    return agg;
-  }, new Map<string, { tokenRegex: RegExp; serialRegex: RegExp }>());
-  return vanillaTransactions.filter((t) => {
-    if (t.memo.toLowerCase().match(/ nft[: ]/i)) {
-      const foundTokenId = Object.keys(transactionsByNft).find((tokenId) => t.memo.match(tokenRegExpMap.get(tokenId).tokenRegex));
-      if (!foundTokenId) {
-        console.info("Unable to find token id " + t.memo + " for suspected NFT");
-      } else {
-        const serialNumberMatch =
-          t.memo.match(/serial number (\d+) /i) || t.memo.match(/serial (\d+) /i) || t.memo.match(tokenRegExpMap.get(foundTokenId).serialRegex);
-        if (!serialNumberMatch) {
-          console.info("Unable to find serial number in " + t.memo + " for suspected NFT with token id: " + foundTokenId);
-        } else {
-          const serialNumber = serialNumberMatch[1];
-          t._attributedNft = `${foundTokenId}:${serialNumber}`;
-          const existingRows: LoadedTransaction[] = transactionsByNft[foundTokenId][serialNumber];
-          if (!existingRows) {
-            transactionsByNft[foundTokenId][serialNumber] = [t];
-          } else {
-            // insert new transaction in sort order as we know transactions are already sorted this is efficient
-            const sortedInsertionIndex =
-              existingRows.findIndex((existingTransaction) => existingTransaction.timestamp > t.timestamp) ?? existingRows.length;
-            existingRows.splice(sortedInsertionIndex, 0, t);
-          }
-          return false;
-        }
-      }
-    }
-    return true;
-  });
-}
-
-async function loadTransactions(accountId: string, items: Transaction[]): Promise<RawLoadedTransaction[]> {
-  return Promise.all(
-    items.map(async (i) => {
-      let tokenTransfers: LoadedTokenTransfer[] = [];
-      let nftTransfers: LoadedNftTransfer[] = [];
-      const memo = Buffer.from(i.memo_base64, "base64").toString();
-      if (i.token_transfers?.length) {
-        const tokenInfos = await Promise.all(i.token_transfers.map((t) => getHederaToken(t.token_id)));
-
-        tokenTransfers = i.token_transfers.map((t, i) => {
-          const tokenInfo = tokenInfos[i];
-          return {
-            tokenId: tokenInfo.token_id,
-            tokenName: tokenInfo.name,
-            tokenSymbol: tokenInfo.symbol,
-            account: t.account,
-            decimalAmount: tokenInfo.decimals ? t.amount / Math.pow(10, parseInt(tokenInfo.decimals, 10)) : t.amount,
-          };
-        });
-      }
-      const response = await callMirror<TransactionByIdResponse>(`/api/v1/transactions/${i.transaction_id}`);
-      const transactionNftTransfers = response.transactions?.filter((t) => t.nft_transfers?.length).flatMap((t) => t.nft_transfers);
-      if (transactionNftTransfers?.length) {
-        const tokenInfos = await Promise.all(transactionNftTransfers.map((t) => getHederaToken(t.token_id)));
-
-        nftTransfers = transactionNftTransfers.map((t, i) => {
-          const tokenInfo = tokenInfos[i];
-          return {
-            tokenId: tokenInfo.token_id,
-            serialNumber: t.serial_number,
-            tokenName: tokenInfo.name,
-            tokenSymbol: tokenInfo.symbol,
-            senderAccount: t.sender_account_id,
-            receiverAccount: t.receiver_account_id,
-          };
-        });
-      }
-      const stakingReward = i.staking_reward_transfers?.find((s) => s.account === accountId)?.amount ?? 0;
-      const transfer = i.transfers.find((a) => a.account === accountId)?.amount ?? 0;
-      const netTransfer = transfer - stakingReward;
-      return {
-        transactionId: i.transaction_id,
-        timestamp: hederaTsToDate(i.consensus_timestamp),
-        hbarToAccount: i.transfers.filter((t) => t.amount > 0 && AccountId.fromString(t.account).num.gt(999)).map((t) => t.account),
-        hbarFromAccount: i.transfers.filter((t) => t.amount < 0 && AccountId.fromString(t.account).num.gt(999)).map((t) => t.account),
-        hbarTransfer: tinyToHbar(netTransfer),
-        stakingReward: tinyToHbar(stakingReward),
-        memo,
-        exchangeRate: await getHederaExchangeRate(hederaTsToDate(i.consensus_timestamp)),
-        tokenTransfers: tokenTransfers.filter((t) => t.account === accountId),
-        nftTransfers: nftTransfers.filter((t) => t.senderAccount === accountId || t.receiverAccount === accountId),
-        consensusTimestamp: i.consensus_timestamp,
-      };
-    })
-  );
-}
-
-async function loadAllTransactions(account: string, dataStartDate: Date, endTimestamp: string, sourceFile: string | undefined) {
+async function loadTransactionData(
+  account: string,
+  dataStartDate: Date,
+  endTimestamp: string,
+  sourceFile: string | null
+): Promise<RawLoadedTransaction[]> {
   let dataStartTs = dateToHederaTs(dataStartDate, false);
-  let loadedTransactions: RawLoadedTransaction[] = [];
+  let sourceTransactions: RawLoadedTransaction[] = [];
   if (sourceFile) {
-    loadedTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as RawLoadedTransaction[];
-    loadedTransactions.forEach((l) => {
+    sourceTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as RawLoadedTransaction[];
+    // deserialize dates, csv lists
+    sourceTransactions.forEach((l) => {
       l.timestamp = new Date(l.timestamp);
       if (typeof l.hbarFromAccount === "string") {
-        l.hbarFromAccount = (l.hbarFromAccount as String).split(",");
+        l.hbarFromAccount = (l.hbarFromAccount as string).split(",");
       }
       if (typeof l.hbarToAccount === "string") {
-        l.hbarToAccount = (l.hbarToAccount as String).split(",");
+        l.hbarToAccount = (l.hbarToAccount as string).split(",");
       }
     });
 
-    const finalTransaction = loadedTransactions.at(-1);
-    dataStartTs = finalTransaction.consensusTimestamp;
+    const finalTransaction = sourceTransactions.at(-1);
+    if (finalTransaction) {
+      dataStartTs = finalTransaction.consensusTimestamp;
+    }
   }
 
-  let next: string | undefined = `/api/v1/transactions?account.id=${account}&limit=25&order=asc&timestamp=gte:${dataStartTs}`;
-  while (next) {
-    console.debug("loading transaction: " + next);
-    const response = await callMirror<TransactionsResponse>(next);
-    if (response.transactions) {
-      // filter out duplicates that can happen when loading transactions from disk
-      let newTransactions = loadedTransactions.length
-        ? response.transactions.filter((t) => t.consensus_timestamp > loadedTransactions.at(-1).consensusTimestamp)
-        : response.transactions;
-      const endTransactionIndex = newTransactions.findIndex((t) => t.consensus_timestamp > endTimestamp);
-      if (endTransactionIndex !== -1) {
-        const finalTransactions = newTransactions.slice(0, endTransactionIndex);
-        console.debug("Adding final transactions. Count: ", finalTransactions.length);
-        loadedTransactions = loadedTransactions.concat(await loadTransactions(account, newTransactions.slice(0, endTransactionIndex)));
-        break;
-      }
-      loadedTransactions = loadedTransactions.concat(await loadTransactions(account, newTransactions));
-    }
-    next = response.links.next;
-  }
-  return loadedTransactions;
-}
-
-/**
- * for aggregate transactions, we don't care about multi-hop token transfers that zero out
- */
-function removeMultiHopTokenTransfers(aggregate: RawLoadedTransaction) {
-  const tokenTransferAmountByAccountToken = new Map<string, LoadedTokenTransfer>();
-  aggregate.tokenTransfers.forEach((t) => {
-    const key = `${t.account}:${t.tokenId}`;
-    const current = tokenTransferAmountByAccountToken.get(key);
-    if (!current) {
-      tokenTransferAmountByAccountToken.set(key, t);
-    } else {
-      current.decimalAmount += t.decimalAmount;
-    }
-  });
-  aggregate.tokenTransfers = Array.from(tokenTransferAmountByAccountToken.entries())
-    .map(([_, v]) => v)
-    .filter((v) => v.decimalAmount !== 0);
-}
-/**
- *  combines transactions with the same transaction id, e.g. contract calls
- *  this function mutates the underlying transactions for performance
- */
-function aggregateSmartContractTransactions(loadedTransactions: RawLoadedTransaction[]): RawLoadedTransaction[] {
-  let aggregatedTransactions: RawLoadedTransaction[] = [];
-  let currentAggregate: RawLoadedTransaction | null = null;
-  loadedTransactions.forEach((t) => {
-    if (!currentAggregate) {
-      currentAggregate = t;
-      return;
-    }
-
-    if (currentAggregate.transactionId !== t.transactionId) {
-      if (currentAggregate._aggregated) {
-        removeMultiHopTokenTransfers(currentAggregate);
-      }
-      aggregatedTransactions.push(currentAggregate);
-      currentAggregate = t;
-      return;
-    }
-
-    console.info(`dealing with smart contract: ${currentAggregate.transactionId}`);
-    currentAggregate._aggregated = true;
-    currentAggregate.hbarFromAccount = [
-      ...currentAggregate.hbarFromAccount,
-      ...t.hbarFromAccount.filter((a) => !currentAggregate.hbarFromAccount.includes(a)),
-    ];
-    currentAggregate.hbarToAccount = [
-      ...currentAggregate.hbarToAccount,
-      ...t.hbarToAccount.filter((a) => !currentAggregate.hbarToAccount.includes(a)),
-    ];
-    currentAggregate.hbarTransfer += t.hbarTransfer;
-    currentAggregate.stakingReward += t.stakingReward;
-    currentAggregate.nftTransfers = [...currentAggregate.nftTransfers, ...t.nftTransfers];
-    currentAggregate.tokenTransfers = [...currentAggregate.tokenTransfers, ...t.tokenTransfers];
-    currentAggregate.memo = [currentAggregate.memo, t.memo].filter((m) => m).join(", ");
-  });
-
-  if (currentAggregate) {
-    aggregatedTransactions.push(currentAggregate);
-  }
-
-  return aggregatedTransactions;
-}
-
-/**
- * This splits apart transactions involving multiple NFTs so we can attribute crypto transfers to each serial. A simple average is used for attribution
- */
-function splitMultiNftTransferTransactions(loadedTransactions: RawLoadedTransaction[]): LoadedTransaction[] {
-  return loadedTransactions
-    .map((t) => {
-      const numberOfSplits = t.nftTransfers.length;
-      if (numberOfSplits <= 1) {
-        return { ...t, nftTransfers: undefined, nftTransfer: t.nftTransfers[0] };
-      }
-      return t.nftTransfers.map((nt) => ({
-        ...t,
-        hbarTransfer: t.hbarTransfer / numberOfSplits,
-        stakingReward: t.stakingReward / numberOfSplits,
-        tokenTransfers: t.tokenTransfers.map((tt) => ({ ...tt, decimalAmount: tt.decimalAmount / numberOfSplits } as LoadedTokenTransfer)),
-        nftTransfer: nt,
-        _splitNfts: true,
-      }));
-    })
-    .flat();
+  return [...sourceTransactions, ...(await loadTransactions(account, dataStartTs, endTimestamp))];
 }
 
 program
@@ -267,24 +66,25 @@ program
     "A source file or directory to use for transactions. This should be a full path to all-transactions.json or a directory containing this file from previous run. This will fine the most recent all-transactions if you don't specify the full path."
   )
   .option("-p, --previousOutput", "Use the previous output as the source file. This is easier to use than specifying the source file explicitly")
-  .option("-o, --overrideDataStart <string>", "Override the start date, ISO string", (d) => new Date(d))
+  .option("--overrideDataStart <string>", "Override the start date, ISO string", (d) => new Date(d))
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   .action(async (account: string, year: number, options: Partial<{ sourcePath: string; previousOutput: boolean; overrideDataStart: Date }>) => {
     const reportStartDate = new Date(`${year}-01-01T00:00:00.000Z`);
     const reportEndDate = new Date(`${year}-12-31T23:59:59.999Z`);
     const dataStartDate = options.overrideDataStart ?? new Date(`${year - 2}-01-01T00:00:00.000Z`);
-    let sourceFile: string | undefined = getSourceFile(year, account, options);
-    console.info("Running tax-report", { sourceFile, reportStartDate, reportEndDate, dataStartDate });
+    const sourceFile = getSourceFile(year, account, options);
+    logger.info({ sourceFile, reportStartDate, reportEndDate, dataStartDate }, "Running tax-report");
     try {
       const endTimestamp = dateToHederaTs(reportEndDate, true);
 
-      let rawLoadedTransactions: RawLoadedTransaction[] = await loadAllTransactions(account, dataStartDate, endTimestamp, sourceFile);
+      let rawLoadedTransactions = await loadTransactionData(account, dataStartDate, endTimestamp, sourceFile);
       // loaded transactions are mutated during processing, so write them to disc first
       const directories = await prepareOutDirectories(year, rawLoadedTransactions, account);
 
       const transactionsByToken: Record<string, LoadedTransaction[]> = {};
       const transactionsByNft: Record<string, Record<number, LoadedTransaction[]>> = {};
       rawLoadedTransactions = aggregateSmartContractTransactions(rawLoadedTransactions);
-      const loadedTransactions = splitMultiNftTransferTransactions(rawLoadedTransactions);
+      const loadedTransactions = splitBatchNftTransferTransactions(rawLoadedTransactions);
 
       let vanillaTransactions: LoadedTransaction[] = [];
       loadedTransactions.forEach((t) => {
@@ -301,7 +101,9 @@ program
           ];
         }
         if (t.tokenTransfers.length) {
-          t.tokenTransfers.forEach((t1) => (transactionsByToken[t1.tokenId] = [...(transactionsByToken[t1.tokenId] ?? []), t]));
+          t.tokenTransfers.forEach((t1) => {
+            transactionsByToken[t1.tokenId] = [...(transactionsByToken[t1.tokenId] ?? []), t];
+          });
         }
       });
 
@@ -313,7 +115,7 @@ program
         .map(([tokenId, transactions]) => ({
           tokenId,
           transactions,
-          tokenSymbol: transactions[0].tokenTransfers.find((t) => t.tokenId === tokenId).tokenSymbol,
+          tokenSymbol: re(transactions[0].tokenTransfers.find((t) => t.tokenId === tokenId)?.tokenSymbol, "Should find token symbol in transaction"),
         }))
         .filter(({ tokenId, transactions }) =>
           transactions.filter(isInTaxYear).find(
@@ -329,7 +131,7 @@ program
             tokenId,
             serialNumber: parseInt(serialNumber, 10),
             transactions,
-            tokenSymbol: transactions.find((n) => n.nftTransfer)?.nftTransfer.tokenSymbol ?? "unknown",
+            tokenSymbol: transactions.find((n) => n.nftTransfer)?.nftTransfer?.tokenSymbol ?? "unknown",
           }))
         )
         .filter(({ tokenId, serialNumber, transactions }) =>
@@ -396,7 +198,7 @@ program
         ),
       ]);
     } catch (e) {
-      console.error(e);
+      logger.error(e);
       process.exit(1);
     }
   });
