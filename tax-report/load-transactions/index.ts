@@ -6,8 +6,17 @@ import { re } from "../existence-util";
 
 import { loadEachTransactionById } from "./load-each-transaction-by-id";
 
-const logger = createLogger("load-transactions-in-range");
+const logger = createLogger("load-transactions");
 
+/**
+ * Loads transactions for a specific account within a given time range.
+ * This will paginate on the transactions endpoint.
+ * For each transaction, it also makes a call to the transactions/<id> endpoint in order to load NFT transfers.
+ * @param account - The account ID.
+ * @param dataStartTs - The start timestamp for the data range.
+ * @param endTimestamp - The end timestamp for the data range.
+ * @returns A promise that resolves to an array of loaded transactions.
+ */
 export async function loadTransactions(account: string, dataStartTs: string, endTimestamp: string) {
   let next: string | undefined | null = `/api/v1/transactions?account.id=${account}&limit=25&order=asc&timestamp=gte:${dataStartTs}`;
   let loadedTransactions: RawLoadedTransaction[] = [];

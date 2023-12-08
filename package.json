@@ -20,6 +20,7 @@
     "csv": "^6.2.5",
     "csv-stringify": "^6.4.4",
     "fast-memoize": "^2.5.2",
+    "file-system-cache": "^2.4.4",
     "lworks-client": "4.0.0",
     "pino": "^8.16.2",
     "pino-lambda": "^4.3.0",

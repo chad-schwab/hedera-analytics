@@ -1,7 +1,7 @@
 import { LoadedTokenTransfer, RawLoadedTransaction } from "../types";
 
 /**
- * for aggregate transactions, we don't care about multi-hop token transfers that zero out
+ * for smart contract transactions, we don't care about multi-hop token transfers that zero out
  */
 export function removeMultiHopTokenTransfers(aggregate: RawLoadedTransaction) {
   const tokenTransferAmountByAccountToken = new Map<string, LoadedTokenTransfer>();

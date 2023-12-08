@@ -11,7 +11,8 @@ import { requireExistence as re } from "../existence-util";
 const logger = createLogger("load-each-transaction");
 
 /**
- * The transactions query endpoint does not include nft transfers, so we load them here. Further, we format the response in an object that is easier to work with than the api object
+ * The transactions query endpoint does not include nft transfers, so we load them here. Further, we format the response in an object that is easier to work with than the api object.
+ * This also filters token and nft transfers to only include those involving the account we are loading for.
  * @param accountId
  * @param transactions
  * @returns

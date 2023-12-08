@@ -58,7 +58,9 @@ async function loadTransactionData(
 }
 
 program
-  .description("Load transactions from the mirror")
+  .description(
+    "Load hedera transactions for a wallet with helpful financial information such as conversions to USD, multi-hop transfer simplification, and more."
+  )
   .argument("<account>", "The account to fetch data for")
   .argument("<year>", "The tax year to fetch data for", (y) => parseInt(y, 10))
   .option(
