@@ -7,16 +7,16 @@ import { configure, Environment, Network } from "lworks-client";
 
 import { createLogger } from "../logger";
 
-import { writeCsv } from "./write-csv";
+import { aggregateSmartContractTransactions } from "./aggregate-smart-contract-transactions";
+import { attributeNftNonTransferTransactions } from "./attribute-non-transfer-nft-transactions";
+import { re } from "./existence-util";
 import { getSourceFile } from "./get-source-file";
 import { dateToHederaTs } from "./hedera-utils";
-import { prepareOutDirectories } from "./prepare-out-directory";
-import { LoadedTransaction, RawLoadedTransaction } from "./types";
-import { attributeNftNonTransferTransactions } from "./attribute-non-transfer-nft-transactions";
+import { loadTransactionTokenInfo } from "./load-transaction-token-data";
 import { loadTransactions } from "./load-transactions";
-import { aggregateSmartContractTransactions } from "./aggregate-smart-contract-transactions";
-import { re } from "./existence-util";
-import { splitBatchNftTransferTransactions } from "./split-batch-nft-transfer-transactions";
+import { prepareOutDirectories } from "./prepare-out-directory";
+import { TokenLoadedTransaction, RawLoadedTransaction } from "./types";
+import { writeCsv } from "./write-csv";
 
 dotenv.config();
 // https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
@@ -83,12 +83,12 @@ program
       // loaded transactions are mutated during processing, so write them to disc first
       const directories = await prepareOutDirectories(year, rawLoadedTransactions, account);
 
-      const transactionsByToken: Record<string, LoadedTransaction[]> = {};
-      const transactionsByNft: Record<string, Record<number, LoadedTransaction[]>> = {};
+      const transactionsByToken: Record<string, TokenLoadedTransaction[]> = {};
+      const transactionsByNft: Record<string, Record<number, TokenLoadedTransaction[]>> = {};
       rawLoadedTransactions = aggregateSmartContractTransactions(rawLoadedTransactions);
-      const loadedTransactions = splitBatchNftTransferTransactions(rawLoadedTransactions);
+      const loadedTransactions = loadTransactionTokenInfo(rawLoadedTransactions);
 
-      let vanillaTransactions: LoadedTransaction[] = [];
+      let vanillaTransactions: TokenLoadedTransaction[] = [];
       loadedTransactions.forEach((t) => {
         if (!t.tokenTransfers.length && !t.nftTransfer) {
           vanillaTransactions.push(t);

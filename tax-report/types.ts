@@ -39,6 +39,7 @@ export type RawLoadedTransaction = {
   _attributedNft?: string;
 };
 
-export type LoadedTransaction = Omit<RawLoadedTransaction, "nftTransfers"> & {
+export type TokenLoadedTransaction = Omit<RawLoadedTransaction, "tokenTransfers" | "nftTransfers"> & {
   nftTransfer: LoadedNftTransfer | undefined;
+  tokenTransfers: Array<LoadedTokenTransfer & { exchangeRate: number }>;
 };

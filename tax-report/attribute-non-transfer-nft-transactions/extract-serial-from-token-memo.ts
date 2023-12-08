@@ -1,6 +1,6 @@
 import memoize from "fast-memoize";
 
-import { LoadedTransaction } from "../types";
+import { TokenLoadedTransaction } from "../types";
 
 function serialMemoPattern(tokenId: string) {
   return new RegExp(`|${tokenId}.(\\d+)`);
@@ -8,7 +8,7 @@ function serialMemoPattern(tokenId: string) {
 
 const getTokenSerialPattern = memoize(serialMemoPattern);
 
-export function extractSerialFromTokenMemo(t: LoadedTransaction, foundTokenId: string) {
+export function extractSerialFromTokenMemo(t: TokenLoadedTransaction, foundTokenId: string) {
   const serialNumberMatch =
     t.memo.match(/serial number (\d+) /i) || t.memo.match(/serial (\d+) /i) || t.memo.match(getTokenSerialPattern(foundTokenId));
 
