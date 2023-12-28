@@ -21,6 +21,7 @@ export type LoadedNftTransfer = {
   senderAccount: string;
   tokenName: string;
   tokenSymbol: string;
+  hbarAttribution: number;
 };
 export type RawLoadedTransaction = {
   transactionId: string;
@@ -39,7 +40,21 @@ export type RawLoadedTransaction = {
   _attributedNft?: string;
 };
 
-export type TokenLoadedTransaction = Omit<RawLoadedTransaction, "tokenTransfers" | "nftTransfers"> & {
+/**
+ * The result of splitting transactions per NFT. This is beneficial for bulk NFT purchases or sales. This does get funky for NFT to NFT trades with supplemental HBAR.
+ */
+export type SplitNftLoadedTransaction = Omit<RawLoadedTransaction, "nftTransfers"> & {
   nftTransfer: LoadedNftTransfer | undefined;
+};
+
+/**
+ * The result of loading the exchange rate for each token transferred This exchange rate allows seeing the price in USD.
+ */
+export type TokenExchangeRateLoadedTransaction = Omit<SplitNftLoadedTransaction, "tokenTransfers"> & {
   tokenTransfers: Array<LoadedTokenTransfer & { exchangeRate: number }>;
 };
+
+/**
+ * The end result of transforming transaction data
+ */
+export type LoadedTransaction = TokenExchangeRateLoadedTransaction;

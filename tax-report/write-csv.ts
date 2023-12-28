@@ -4,7 +4,7 @@ import { stringify } from "csv-stringify";
 
 import { createLogger } from "../logger";
 
-import { LoadedTokenTransfer, TokenLoadedTransaction } from "./types";
+import { LoadedTokenTransfer, LoadedTransaction } from "./types";
 
 const logger = createLogger("csv");
 
@@ -37,7 +37,7 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
   }, {});
 }
 
-function writeStakingRewardColumns(stakingStrategy: StakingRewardStrategy, i: TokenLoadedTransaction) {
+function writeStakingRewardColumns(stakingStrategy: StakingRewardStrategy, i: LoadedTransaction) {
   return stakingStrategy.strategy === "omit"
     ? undefined
     : { "Hbar Staking Reward": i.stakingReward, "Staking Reward USD": i.stakingReward * i.exchangeRate };
@@ -62,7 +62,7 @@ function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers:
   }
 }
 
-function writeNftColumns(nftStrategy: NftStrategy, i: TokenLoadedTransaction, accountId: string) {
+function writeNftColumns(nftStrategy: NftStrategy, i: LoadedTransaction, accountId: string) {
   return nftStrategy.strategy === "omit"
     ? undefined
     : {
@@ -75,7 +75,7 @@ function writeNftColumns(nftStrategy: NftStrategy, i: TokenLoadedTransaction, ac
       };
 }
 
-function writeMetaColumns(metaStrategy: MetaStrategy, i: TokenLoadedTransaction) {
+function writeMetaColumns(metaStrategy: MetaStrategy, i: LoadedTransaction) {
   return metaStrategy.strategy === "omit"
     ? undefined
     : {
@@ -88,7 +88,7 @@ function writeMetaColumns(metaStrategy: MetaStrategy, i: TokenLoadedTransaction)
 
 export function writeCsv(
   accountId: string,
-  transactions: TokenLoadedTransaction[],
+  transactions: LoadedTransaction[],
   fileName: string,
   {
     tokenStrategy = { strategy: "join" },

@@ -7,15 +7,12 @@ import { configure, Environment, Network } from "lworks-client";
 
 import { createLogger } from "../logger";
 
-import { aggregateSmartContractTransactions } from "./aggregate-smart-contract-transactions";
-import { attributeNftNonTransferTransactions } from "./attribute-non-transfer-nft-transactions";
-import { re } from "./existence-util";
 import { getSourceFile } from "./get-source-file";
 import { dateToHederaTs } from "./hedera-utils";
-import { loadTransactionTokenInfo } from "./load-transaction-token-data";
 import { loadTransactions } from "./load-transactions";
 import { prepareOutDirectories } from "./prepare-out-directory";
-import { TokenLoadedTransaction, RawLoadedTransaction } from "./types";
+import { transformTransactions } from "./transform-transactions";
+import { RawLoadedTransaction } from "./types";
 import { writeCsv } from "./write-csv";
 
 dotenv.config();
@@ -79,74 +76,21 @@ program
     try {
       const endTimestamp = dateToHederaTs(reportEndDate, true);
 
-      let rawLoadedTransactions = await loadTransactionData(account, dataStartDate, endTimestamp, sourceFile);
+      const rawLoadedTransactions = await loadTransactionData(account, dataStartDate, endTimestamp, sourceFile);
       // loaded transactions are mutated during processing, so write them to disc first
       const directories = await prepareOutDirectories(year, rawLoadedTransactions, account);
 
-      const transactionsByToken: Record<string, TokenLoadedTransaction[]> = {};
-      const transactionsByNft: Record<string, Record<number, TokenLoadedTransaction[]>> = {};
-      rawLoadedTransactions = aggregateSmartContractTransactions(rawLoadedTransactions);
-      const loadedTransactions = loadTransactionTokenInfo(rawLoadedTransactions);
-
-      let vanillaTransactions: TokenLoadedTransaction[] = [];
-      loadedTransactions.forEach((t) => {
-        if (!t.tokenTransfers.length && !t.nftTransfer) {
-          vanillaTransactions.push(t);
-        }
-        if (t.nftTransfer) {
-          if (!transactionsByNft[t.nftTransfer.tokenId]) {
-            transactionsByNft[t.nftTransfer.tokenId] = {};
-          }
-          transactionsByNft[t.nftTransfer.tokenId][t.nftTransfer.serialNumber] = [
-            ...(transactionsByNft[t.nftTransfer.tokenId][t.nftTransfer.serialNumber] ?? []),
-            t,
-          ];
-        }
-        if (t.tokenTransfers.length) {
-          t.tokenTransfers.forEach((t1) => {
-            transactionsByToken[t1.tokenId] = [...(transactionsByToken[t1.tokenId] ?? []), t];
-          });
-        }
-      });
-
-      const isInTaxYear = (t: { timestamp: Date }) => t.timestamp >= reportStartDate && t.timestamp <= reportEndDate;
-      vanillaTransactions = attributeNftNonTransferTransactions(vanillaTransactions, transactionsByNft);
-      const loadedTransactionsInTaxYear = loadedTransactions.filter(isInTaxYear);
-      const vanillaTransactionsInTaxYear = vanillaTransactions.filter(isInTaxYear);
-      const soldTokens = Object.entries(transactionsByToken)
-        .map(([tokenId, transactions]) => ({
-          tokenId,
-          transactions,
-          tokenSymbol: re(transactions[0].tokenTransfers.find((t) => t.tokenId === tokenId)?.tokenSymbol, "Should find token symbol in transaction"),
-        }))
-        .filter(({ tokenId, transactions }) =>
-          transactions.filter(isInTaxYear).find(
-            (t1) =>
-              // Did we send tokens and did we get paid for it
-              t1.tokenTransfers.find((t2) => t2.tokenId === tokenId && t2.decimalAmount < 0) && t1.hbarTransfer > 1
-          )
-        )
-        .sort((t1, t2) => t1.tokenSymbol.localeCompare(t2.tokenSymbol));
-      const soldNfts = Object.entries(transactionsByNft)
-        .flatMap(([tokenId, transactionsBySerial]) =>
-          Object.entries(transactionsBySerial).map(([serialNumber, transactions]) => ({
-            tokenId,
-            serialNumber: parseInt(serialNumber, 10),
-            transactions,
-            tokenSymbol: transactions.find((n) => n.nftTransfer)?.nftTransfer?.tokenSymbol ?? "unknown",
-          }))
-        )
-        .filter(({ tokenId, serialNumber, transactions }) =>
-          transactions.filter(isInTaxYear).find(
-            (t1) =>
-              // Did we send an NFT and did we get paid for it?
-              t1.nftTransfer &&
-              t1.nftTransfer.tokenId === tokenId &&
-              t1.nftTransfer.serialNumber === serialNumber &&
-              t1.nftTransfer.senderAccount === account &&
-              t1.hbarTransfer > 1
-          )
-        );
+      // TODO: Accept and load multiple account transaction data
+      const {
+        loadedTransactions,
+        vanillaTransactions,
+        vanillaTransactionsInTaxYear,
+        loadedTransactionsInTaxYear,
+        transactionsByToken,
+        transactionsByNft,
+        soldTokens,
+        soldNfts,
+      } = await transformTransactions({ [account]: rawLoadedTransactions }, reportStartDate, reportEndDate);
 
       await Promise.all([
         writeCsv(account, loadedTransactions, path.join(directories.allTimeDir, "all-transactions.csv")),

@@ -1,17 +1,11 @@
 import { callMirror } from "lworks-client";
-import memoize from "fast-memoize";
-
-import { createLogger } from "../logger";
 
 import { TokenInfo } from "./types";
+import { FileCacheMemo } from "./file-cache-memo";
 
-const logger = createLogger("get-hedera-token");
+const fileCacheMemo = FileCacheMemo((tokenId) => callMirror<TokenInfo>(`/api/v1/tokens/${tokenId}`), {
+  basePath: "./.cache", // (optional) Path where cache files are stored (default).
+  ns: "token-by-id", // (optional) A grouping namespace for items.
+});
 
-function loadMirrorToken(tokenId: string): Promise<TokenInfo> {
-  return callMirror<TokenInfo>(`/api/v1/tokens/${tokenId}`).catch((e) => {
-    logger.info(e, `Error calling mirror tokens endpoint for token with id: ${tokenId}`);
-    throw e;
-  });
-}
-
-export const getHederaToken = memoize(loadMirrorToken);
+export const getHederaToken = fileCacheMemo.get;

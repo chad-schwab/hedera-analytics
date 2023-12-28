@@ -14,3 +14,7 @@ export function hederaTsToDate(hederaTs: string) {
 export function tinyToHbar(tinyBar: number) {
   return tinyBar / 100000000;
 }
+const hederaSystemAccountRegex = /^[0-9]+\.[0-9]+\.[0-9]{3}$/;
+export function isHederaSystemAccount(accountId?: string | null) {
+  return accountId && hederaSystemAccountRegex.test(accountId);
+}

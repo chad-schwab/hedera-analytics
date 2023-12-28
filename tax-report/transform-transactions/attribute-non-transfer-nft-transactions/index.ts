@@ -1,5 +1,5 @@
-import { TokenLoadedTransaction } from "../types";
-import { createLogger } from "../../logger";
+import { LoadedTransaction } from "../../types";
+import { createLogger } from "../../../logger";
 
 import { extractSerialFromTokenMemo } from "./extract-serial-from-token-memo";
 import { isMemoTokenReference } from "./is-memo-token-reference";
@@ -13,8 +13,8 @@ const logger = createLogger("attribute-non-transfer-nft-transactions");
  * We have to search the memo because the transaction response from the mirror very oddly does not include allowance information.
  */
 export function attributeNftNonTransferTransactions(
-  vanillaTransactions: TokenLoadedTransaction[],
-  transactionsByNft: Record<string, Record<number, TokenLoadedTransaction[]>>
+  vanillaTransactions: LoadedTransaction[],
+  transactionsByNft: Record<string, Record<number, LoadedTransaction[]>>
 ) {
   return vanillaTransactions.filter((t) => {
     if (isMemoSuspectedNft(t.memo)) {
@@ -27,7 +27,7 @@ export function attributeNftNonTransferTransactions(
           logger.info(`Unable to find serial number in ${t.memo} for suspected NFT with token id: ${foundTokenId}`);
         } else {
           t._attributedNft = `${foundTokenId}:${serialNumber}`;
-          const existingRows: TokenLoadedTransaction[] = transactionsByNft[foundTokenId][serialNumber];
+          const existingRows: LoadedTransaction[] = transactionsByNft[foundTokenId][serialNumber];
           if (!existingRows) {
             transactionsByNft[foundTokenId][serialNumber] = [t];
           } else {

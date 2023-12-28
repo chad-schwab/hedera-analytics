@@ -2,13 +2,16 @@ import { AccountId } from "@hashgraph/sdk";
 import { callMirror } from "lworks-client";
 
 import { createLogger } from "../../logger";
+import { requireExistence as re } from "../existence-util";
 import { getHederaExchangeRate } from "../get-hedera-exchange-rate";
 import { getHederaToken } from "../get-hedera-token";
-import { hederaTsToDate, tinyToHbar } from "../hedera-utils";
+import { hederaTsToDate } from "../hedera-utils";
 import { LoadedNftTransfer, LoadedTokenTransfer, RawLoadedTransaction, Transaction, TransactionByIdResponse } from "../types";
-import { requireExistence as re } from "../existence-util";
 
-const logger = createLogger("load-each-transaction");
+import { calculateHbarGL } from "./calculate-hbar-gl";
+import { calculateNftHbarAttributions } from "./calculate-nft-hbar-attribution";
+
+export const logger = createLogger("load-each-transaction");
 
 /**
  * The transactions query endpoint does not include nft transfers, so we load them here. Further, we format the response in an object that is easier to work with than the api object.
@@ -23,6 +26,8 @@ export async function loadEachTransactionById(accountId: string, transactions: T
       let tokenTransfers: LoadedTokenTransfer[] = [];
       let nftTransfers: LoadedNftTransfer[] = [];
       const memo = Buffer.from(transaction.memo_base64 ?? "", "base64").toString();
+      const { netTransfer, stakingReward } = calculateHbarGL(transaction, accountId);
+
       if (transaction.token_transfers?.length) {
         const tokenInfos = await Promise.all(transaction.token_transfers.map((t) => getHederaToken(re(t.token_id))));
 
@@ -42,12 +47,18 @@ export async function loadEachTransactionById(accountId: string, transactions: T
           };
         });
       }
+
       const response = await callMirror<TransactionByIdResponse>(`/api/v1/transactions/${transaction.transaction_id}`);
-      const transactionNftTransfers = response.transactions?.filter((t) => t.nft_transfers?.length).flatMap((t) => re(t.nft_transfers));
+      const transactionWithNftTransfers = re(
+        response.transactions?.find((t) => t.consensus_timestamp === transaction.consensus_timestamp),
+        `We should get a transaction matching ${transaction.transaction_id} at ${transaction.consensus_timestamp} from the mirror.`
+      );
+      const transactionNftTransfers = transactionWithNftTransfers.nft_transfers;
       if (transactionNftTransfers?.length) {
         const tokenInfos = await Promise.all(transactionNftTransfers.map((t) => getHederaToken(re(t.token_id))));
 
-        nftTransfers = transactionNftTransfers.map((t, i) => {
+        const nftTransferHbarAttribution = calculateNftHbarAttributions(transactionWithNftTransfers, netTransfer);
+        nftTransfers = transactionNftTransfers.map((t, i): LoadedNftTransfer => {
           const tokenInfo = tokenInfos[i];
           return {
             tokenId: re(tokenInfo.token_id),
@@ -56,12 +67,10 @@ export async function loadEachTransactionById(accountId: string, transactions: T
             tokenSymbol: re(tokenInfo.symbol),
             senderAccount: re(t.sender_account_id),
             receiverAccount: re(t.receiver_account_id),
+            hbarAttribution: nftTransferHbarAttribution[i],
           };
         });
       }
-      const stakingReward = transaction.staking_reward_transfers?.find((s) => s.account === accountId)?.amount ?? 0;
-      const transfer = transaction.transfers?.find((a) => a.account === accountId)?.amount ?? 0;
-      const netTransfer = transfer - stakingReward;
       return {
         transactionId: re(transaction.transaction_id),
         timestamp: hederaTsToDate(re(transaction.consensus_timestamp)),
@@ -71,8 +80,8 @@ export async function loadEachTransactionById(accountId: string, transactions: T
         hbarFromAccount: re(transaction.transfers)
           .filter((t) => t.amount < 0 && AccountId.fromString(re(t.account)).num.gt(999))
           .map((t) => re(t.account)),
-        hbarTransfer: tinyToHbar(netTransfer),
-        stakingReward: tinyToHbar(stakingReward),
+        hbarTransfer: netTransfer,
+        stakingReward,
         memo,
         exchangeRate: await getHederaExchangeRate(hederaTsToDate(re(transaction.consensus_timestamp))),
         tokenTransfers: tokenTransfers.filter((t) => t.account === accountId),

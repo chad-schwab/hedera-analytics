@@ -1,15 +1,16 @@
 import { createLogger } from "../../logger";
 import { RawLoadedTransaction } from "../types";
 
-import { removeMultiHopTokenTransfers } from "./remove-multi-hop-token-transfers";
+import { removeZeroedNftTransfers } from "./remove-zeroed-nft-transfers";
+import { removeZeroedTokenTransfers } from "./remove-zeroed-token-transfers";
 
-const logger = createLogger("aggregate-smart-contract-transactions");
+const logger = createLogger("merge-transactions-by-transaction-id");
 
 /**
- *  combines transactions with the same transaction id, e.g. contract calls
+ *  combines transactions with the same transaction id, e.g. contract calls and merged account transactions
  *  this function mutates the underlying transactions for performance
  */
-export function aggregateSmartContractTransactions(loadedTransactions: RawLoadedTransaction[]): RawLoadedTransaction[] {
+export function mergeTransactionsByTransactionId(loadedTransactions: RawLoadedTransaction[]): RawLoadedTransaction[] {
   const aggregatedTransactions: RawLoadedTransaction[] = [];
   let runningAggregate: RawLoadedTransaction | null = null;
   loadedTransactions.forEach((t) => {
@@ -21,15 +22,12 @@ export function aggregateSmartContractTransactions(loadedTransactions: RawLoaded
     const currentAggregate = runningAggregate;
 
     if (currentAggregate.transactionId !== t.transactionId) {
-      if (currentAggregate._aggregated) {
-        removeMultiHopTokenTransfers(currentAggregate);
-      }
       aggregatedTransactions.push(currentAggregate);
       runningAggregate = t;
       return;
     }
 
-    logger.info(`dealing with smart contract: ${currentAggregate.transactionId}`);
+    logger.debug(`dealing with duplicated transaction id: ${currentAggregate.transactionId}`);
     currentAggregate._aggregated = true;
     currentAggregate.hbarFromAccount = [
       ...currentAggregate.hbarFromAccount,
@@ -41,9 +39,9 @@ export function aggregateSmartContractTransactions(loadedTransactions: RawLoaded
     ];
     currentAggregate.hbarTransfer += t.hbarTransfer;
     currentAggregate.stakingReward += t.stakingReward;
-    currentAggregate.nftTransfers = [...currentAggregate.nftTransfers, ...t.nftTransfers];
-    currentAggregate.tokenTransfers = [...currentAggregate.tokenTransfers, ...t.tokenTransfers];
-    currentAggregate.memo = [currentAggregate.memo, t.memo].filter((m) => m).join(", ");
+    currentAggregate.nftTransfers = removeZeroedNftTransfers([...currentAggregate.nftTransfers, ...t.nftTransfers]);
+    currentAggregate.tokenTransfers = removeZeroedTokenTransfers([...currentAggregate.tokenTransfers, ...t.tokenTransfers]);
+    currentAggregate.memo = currentAggregate.memo === t.memo ? currentAggregate.memo : [currentAggregate.memo, t.memo].filter((m) => m).join(", ");
   });
 
   if (runningAggregate) {
