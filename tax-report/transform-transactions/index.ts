@@ -84,6 +84,7 @@ export async function transformTransactions(
     );
 
   return {
+    accountKey,
     loadedTransactions,
     vanillaTransactions,
     soldTokens,

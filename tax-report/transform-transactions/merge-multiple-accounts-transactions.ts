@@ -1,5 +1,7 @@
 import { RawLoadedTransaction } from "../types";
 
+import { getAggregatedAccountId } from "./get-aggregated-account-key";
+
 function rekeyAccountTransactions(newAccountKey: string, accountTransactions: Record<string, RawLoadedTransaction[]>) {
   const transformedTransactions: RawLoadedTransaction[][] = Object.entries(accountTransactions).map(([accountId, transactions]) => {
     const aggregateKeyReplacer = (account: string) => (account === accountId ? newAccountKey : account);
@@ -22,7 +24,7 @@ export function mergeMultipleAccountsTransactions(accountTransactions: Record<st
     return { mergedTransactions: Object.values(accountTransactions)[0] ?? [], accountKey: allAccounts[0] };
   }
 
-  const accountKey = allAccounts.sort().join(":");
+  const accountKey = getAggregatedAccountId(allAccounts);
   const transformedTransactions: RawLoadedTransaction[][] = rekeyAccountTransactions(accountKey, accountTransactions);
 
   const sortIndexes = transformedTransactions.map(() => 0);

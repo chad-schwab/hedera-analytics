@@ -2,9 +2,8 @@ import { writeFile } from "node:fs";
 
 import { stringify } from "csv-stringify";
 
-import { createLogger } from "../logger";
-
-import { LoadedTokenTransfer, LoadedTransaction } from "./types";
+import { createLogger } from "../../logger";
+import { LoadedTokenTransfer, LoadedTransaction } from "../types";
 
 const logger = createLogger("write-csv");
 
