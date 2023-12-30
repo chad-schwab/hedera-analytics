@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { program } from "commander";
@@ -8,12 +7,11 @@ import { configure, Environment, Network } from "lworks-client";
 import { createLogger } from "../logger";
 
 import { dateToHederaTs } from "./hedera-utils";
-import { loadTransactionsFromMirror } from "./load-transactions/load-transactions-from-mirror";
+import { loadTransactions } from "./load-transactions";
 import { prepareOutDirectories } from "./prepare-out-directory";
 import { transformTransactions } from "./transform-transactions";
 import { RawLoadedTransaction } from "./types";
 import { writeCsv } from "./write-csv";
-import { loadTransactions } from "./load-transactions";
 
 dotenv.config();
 // https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
