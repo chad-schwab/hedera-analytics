@@ -25,7 +25,7 @@ function sanitizeDeserializedTransaction(value: RawLoadedTransaction): RawLoaded
 export async function getCachedTransactions(account: string) {
   const gZippedArchiveData = await fileCache.get(account, null);
   if (!gZippedArchiveData) {
-    logger.debug({ account, currentArchiveVersion }, `No valid archived data found for account ${account}`);
+    logger.debug({ account, currentArchiveVersion }, `No archived data found for account ${account}`);
     return null;
   }
   if (typeof gZippedArchiveData !== "string") {
