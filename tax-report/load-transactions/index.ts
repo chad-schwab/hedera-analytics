@@ -1,3 +1,5 @@
+import zlib from "node:zlib";
+
 import Cache from "file-system-cache";
 
 import { createLogger } from "../../logger";
@@ -14,7 +16,7 @@ const fileCache = Cache({
   ns: "account-transaction-archive",
 });
 
-const currentArchiveVersion = 1;
+const currentArchiveVersion = 2;
 
 export type ArchiveData = {
   transactions: RawLoadedTransaction[];
@@ -22,18 +24,38 @@ export type ArchiveData = {
 };
 
 async function getCachedArchive(account: string) {
-  const archivedData: ArchiveData | null = await fileCache.get(account, null);
-  if (!archivedData) {
+  const gZippedArchiveData = await fileCache.get(account, null);
+  if (!gZippedArchiveData) {
     logger.debug({ account, currentArchiveVersion }, `No valid archived data found for account ${account}`);
-  } else if (archivedData.version !== currentArchiveVersion) {
+    return null;
+  }
+  if (typeof gZippedArchiveData !== "string") {
+    logger.debug({ account, archiveType: typeof gZippedArchiveData }, `Unknown format for archive data for: ${account}`);
+    return null;
+  }
+
+  let archiveData: ArchiveData;
+  try {
+    archiveData = JSON.parse(zlib.gunzipSync(Buffer.from(gZippedArchiveData, "base64")).toString());
+  } catch (e) {
+    logger.warn(e, "Failed to decompress archived data");
+    return null;
+  }
+  if (archiveData.version !== currentArchiveVersion) {
     logger.debug(
-      { account, archivedDataVersion: archivedData?.version, currentArchiveVersion },
+      { account, archivedDataVersion: archiveData?.version, currentArchiveVersion },
       `No valid archived data found for account ${account}`
     );
   }
-  return archivedData;
-}
 
+  return archiveData;
+}
+async function setArchiveData(account: string, transactions: RawLoadedTransaction[]) {
+  logger.debug({ account, transactionsLoaded: transactions.length }, "Saving new transactions to cache");
+  const transactionsArchive = zlib.gzipSync(JSON.stringify({ transactions, version: currentArchiveVersion })).toString("base64");
+
+  await fileCache.set(account, transactionsArchive);
+}
 function sanitizeDeserializedTransaction(value: RawLoadedTransaction): RawLoadedTransaction {
   value.timestamp = new Date(value.timestamp);
   return value;
@@ -69,12 +91,12 @@ export async function loadAccountTransactions(account: string, dataStartDate: Da
   }
 
   if (transactions.length !== archivedData?.transactions.length) {
-    logger.debug({ account, transactionsLoaded: transactions.length }, "Saving new transactions to cache");
-    await fileCache.set(account, { transactions, version: currentArchiveVersion });
+    await setArchiveData(account, transactions);
   }
 
   return transactions;
 }
+
 /**
  * Loads transactions for multiple accounts within a specified date range. Results are cached per account to allow speedy subsequent loads.
  * @param accounts - An array of account IDs.
