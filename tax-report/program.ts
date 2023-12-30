@@ -7,13 +7,13 @@ import { configure, Environment, Network } from "lworks-client";
 
 import { createLogger } from "../logger";
 
-import { getSourceFile } from "./get-source-file";
 import { dateToHederaTs } from "./hedera-utils";
-import { loadTransactions } from "./load-transactions";
+import { loadTransactionsFromMirror } from "./load-transactions/load-transactions-from-mirror";
 import { prepareOutDirectories } from "./prepare-out-directory";
 import { transformTransactions } from "./transform-transactions";
 import { RawLoadedTransaction } from "./types";
 import { writeCsv } from "./write-csv";
+import { loadTransactions } from "./load-transactions";
 
 dotenv.config();
 // https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
@@ -24,61 +24,30 @@ export const logger = createLogger("tax-report");
 
 configure({ environment: Environment.public, network: Network.Mainnet, disableTracking: true });
 
-async function loadTransactionData(
-  account: string,
-  dataStartDate: Date,
-  endTimestamp: string,
-  sourceFile: string | null
-): Promise<RawLoadedTransaction[]> {
-  let dataStartTs = dateToHederaTs(dataStartDate, false);
-  let sourceTransactions: RawLoadedTransaction[] = [];
-  if (sourceFile) {
-    sourceTransactions = JSON.parse(readFileSync(sourceFile).toString("utf-8")) as RawLoadedTransaction[];
-    // deserialize dates, csv lists
-    sourceTransactions.forEach((l) => {
-      l.timestamp = new Date(l.timestamp);
-      if (typeof l.hbarFromAccount === "string") {
-        l.hbarFromAccount = (l.hbarFromAccount as string).split(",");
-      }
-      if (typeof l.hbarToAccount === "string") {
-        l.hbarToAccount = (l.hbarToAccount as string).split(",");
-      }
-    });
+async function loadTransactionData(account: string, dataStartDate: Date, reportEndDate: Date): Promise<RawLoadedTransaction[]> {
+  const dataStartTs = dateToHederaTs(dataStartDate, false);
+  const dataEndTs = dateToHederaTs(reportEndDate, true);
 
-    const finalTransaction = sourceTransactions.at(-1);
-    if (finalTransaction) {
-      dataStartTs = finalTransaction.consensusTimestamp;
-    }
-  }
-
-  return [...sourceTransactions, ...(await loadTransactions(account, dataStartTs, endTimestamp))];
+  return loadTransactions(account, dataStartTs, dataEndTs);
 }
 
 program
   .description(
-    "Load hedera transactions for a wallet with helpful financial information such as conversions to USD, multi-hop transfer simplification, and more."
+    "Load Hedera transactions for a wallet and generate comprehensive financial information, including USD conversions, simplified multi-hop transfers, and more. Merge transactions from multiple accounts to create a unified view, as if multiple accounts were one."
   )
-  .argument("<account>", "The account to fetch data for")
+  .argument("<account>", "The account(s) to fetch data for. Input a CSV list of accounts to merge transactions from multiple accounts.")
   .argument("<year>", "The tax year to fetch data for", (y) => parseInt(y, 10))
-  .option(
-    "-s, --sourcePath <string>",
-    "A source file or directory to use for transactions. This should be a full path to all-transactions.json or a directory containing this file from previous run. This will fine the most recent all-transactions if you don't specify the full path."
-  )
-  .option("-p, --previousOutput", "Use the previous output as the source file. This is easier to use than specifying the source file explicitly")
   .option("--overrideDataStart <string>", "Override the start date, ISO string", (d) => new Date(d))
   // eslint-disable-next-line sonarjs/cognitive-complexity
-  .action(async (account: string, year: number, options: Partial<{ sourcePath: string; previousOutput: boolean; overrideDataStart: Date }>) => {
+  .action(async (account: string, year: number, options: Partial<{ overrideDataStart: Date }>) => {
     const reportStartDate = new Date(`${year}-01-01T00:00:00.000Z`);
     const reportEndDate = new Date(`${year}-12-31T23:59:59.999Z`);
     const dataStartDate = options.overrideDataStart ?? new Date(`${year - 2}-01-01T00:00:00.000Z`);
-    const sourceFile = getSourceFile(year, account, options);
-    logger.info({ sourceFile, reportStartDate, reportEndDate, dataStartDate }, "Running tax-report");
+    logger.info({ reportStartDate, reportEndDate, dataStartDate }, "Running tax-report");
     try {
-      const endTimestamp = dateToHederaTs(reportEndDate, true);
-
-      const rawLoadedTransactions = await loadTransactionData(account, dataStartDate, endTimestamp, sourceFile);
+      const rawLoadedTransactions = await loadTransactionData(account, dataStartDate, reportEndDate);
       // loaded transactions are mutated during processing, so write them to disc first
-      const directories = await prepareOutDirectories(year, rawLoadedTransactions, account);
+      const directories = await prepareOutDirectories(year, account);
 
       // TODO: Accept and load multiple account transaction data
       const {

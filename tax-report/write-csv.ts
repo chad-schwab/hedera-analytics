@@ -6,7 +6,7 @@ import { createLogger } from "../logger";
 
 import { LoadedTokenTransfer, LoadedTransaction } from "./types";
 
-const logger = createLogger("csv");
+const logger = createLogger("write-csv");
 
 type ColumnTokenStrategy = { strategy: "column"; allTokens: { tokenId: string; tokenSymbol: string }[]; targetTokenId?: string };
 export type TokenStrategy = { strategy: "omit" } | { strategy: "join" } | ColumnTokenStrategy;
