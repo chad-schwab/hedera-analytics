@@ -15,13 +15,7 @@ export async function transformTransactions(
   const transactionsByNft: Record<string, Record<number, LoadedTransaction[]>> = {};
   const { mergedTransactions, accountKey } = mergeMultipleAccountsTransactions(targetAccountLoadedTransactions);
   const aggregatedTransactions = aggregateTransactionsByTransactionId(mergedTransactions);
-  const nftLoadedTransaction = splitMultiNftTransfers(aggregatedTransactions);
-
-  // TODO: load fungible token exchange rates
-  const loadedTransactions: LoadedTransaction[] = nftLoadedTransaction.map((t) => ({
-    ...t,
-    tokenTransfers: t.tokenTransfers.map((tt) => ({ ...tt, exchangeRate: 0 })),
-  }));
+  const loadedTransactions = splitMultiNftTransfers(aggregatedTransactions);
 
   let vanillaTransactions: LoadedTransaction[] = [];
   loadedTransactions.forEach((t) => {

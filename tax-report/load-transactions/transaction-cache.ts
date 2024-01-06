@@ -11,7 +11,7 @@ export const fileCache = Cache({
   basePath: "./.cache",
   ns: "account-transaction-archive",
 });
-export const currentArchiveVersion = 2;
+export const currentArchiveVersion = 3;
 
 export type ArchiveData = {
   transactions: RawLoadedTransaction[];

@@ -7,6 +7,7 @@ import { getHederaExchangeRate } from "../get-hedera-exchange-rate";
 import { getHederaToken } from "../get-hedera-token";
 import { hederaTsToDate } from "../hedera-utils";
 import { LoadedNftTransfer, LoadedTokenTransfer, RawLoadedTransaction, Transaction, TransactionByIdResponse } from "../types";
+import { getSaucerExchangeRate } from "../get-saucer-exchange-rate";
 
 import { calculateHbarGL } from "./calculate-hbar-gl";
 import { calculateNftHbarAttributions } from "./calculate-nft-hbar-attribution";
@@ -23,7 +24,7 @@ export const logger = createLogger("load-each-transaction");
 export async function loadEachTransactionById(accountId: string, transactions: Transaction[]): Promise<RawLoadedTransaction[]> {
   return Promise.all(
     transactions.map(async (transaction) => {
-      let tokenTransfers: LoadedTokenTransfer[] = [];
+      let tokenTransfers: Omit<LoadedTokenTransfer, "exchangeRate">[] = [];
       let nftTransfers: LoadedNftTransfer[] = [];
       const memo = Buffer.from(transaction.memo_base64 ?? "", "base64").toString();
       const { netTransfer, stakingReward } = calculateHbarGL(transaction, accountId);
@@ -84,7 +85,14 @@ export async function loadEachTransactionById(accountId: string, transactions: T
         stakingReward,
         memo,
         exchangeRate: await getHederaExchangeRate(hederaTsToDate(re(transaction.consensus_timestamp))),
-        tokenTransfers: tokenTransfers.filter((t) => t.account === accountId),
+        tokenTransfers: await Promise.all(
+          tokenTransfers
+            .filter((t) => t.account === accountId)
+            .map(async (t) => ({
+              ...t,
+              exchangeRate: await getSaucerExchangeRate(t.tokenId, hederaTsToDate(re(transaction.consensus_timestamp))).then((r) => r.avg),
+            }))
+        ),
         nftTransfers: nftTransfers.filter((t) => t.senderAccount === accountId || t.receiverAccount === accountId),
         consensusTimestamp: re(transaction.consensus_timestamp),
       } satisfies RawLoadedTransaction;

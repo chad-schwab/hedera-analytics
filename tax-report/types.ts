@@ -13,6 +13,7 @@ export type LoadedTokenTransfer = {
   decimalAmount: number;
   tokenName: string;
   tokenSymbol: string;
+  exchangeRate: number;
 };
 export type LoadedNftTransfer = {
   tokenId: string;
@@ -48,13 +49,6 @@ export type SplitNftLoadedTransaction = Omit<RawLoadedTransaction, "nftTransfers
 };
 
 /**
- * The result of loading the exchange rate for each token transferred This exchange rate allows seeing the price in USD.
- */
-export type TokenExchangeRateLoadedTransaction = Omit<SplitNftLoadedTransaction, "tokenTransfers"> & {
-  tokenTransfers: Array<LoadedTokenTransfer & { exchangeRate: number }>;
-};
-
-/**
  * The end result of transforming transaction data
  */
-export type LoadedTransaction = TokenExchangeRateLoadedTransaction;
+export type LoadedTransaction = SplitNftLoadedTransaction;

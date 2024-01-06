@@ -32,6 +32,7 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
     return {
       ...agg,
       [`${token.tokenSymbol}:${token.tokenId} G/L`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.decimalAmount,
+      [`${token.tokenSymbol}:${token.tokenId} Exchange Rate`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.exchangeRate,
     };
   }, {});
 }
@@ -53,6 +54,7 @@ function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers:
         "Token Name": tokenTransfers.map((t) => t.tokenName).join(", "),
         "Token Symbol": tokenTransfers.map((t) => t.tokenSymbol).join(", "),
         "Token G/L": tokenTransfers.map((t) => t.decimalAmount).join(", "),
+        "Token Exchange Rate": tokenTransfers.map((t) => t.exchangeRate).join(", "),
       };
     case "column":
       return handleColumnStrategy(tokenStrategy, tokenTransfers);
