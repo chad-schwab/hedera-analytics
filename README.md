@@ -15,14 +15,13 @@ This project is a tool designed to load Hedera transactions for a wallet and gen
 
 ## Usage
 
-The program takes two arguments: the account to fetch data for and the tax year to fetch data for. It also provides several options:
-
-- `--overrideDataStart <string>`: Override the start date, ISO string.
+The program takes two arguments: the account(s) to fetch data for and the tax year to fetch data for.
 
 Example usage:
 
-```bash
-npm run tax-report <account> <year>
+```
+npm run tax-report 0.0.12345 2023
+npm run tax-report 0.0.12345,0.0.12346 2023
 ```
 
 ## Disclaimer
