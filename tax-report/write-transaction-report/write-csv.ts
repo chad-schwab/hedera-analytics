@@ -29,10 +29,14 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
     }
   }
   return allTokens.reduce((agg, token) => {
+    const currentTokenTransfers = tokenTransfers.find((t) => t.tokenId === token.tokenId);
     return {
       ...agg,
-      [`${token.tokenSymbol}:${token.tokenId} G/L`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.decimalAmount,
-      [`${token.tokenSymbol}:${token.tokenId} Exchange Rate`]: tokenTransfers.find((t) => t.tokenId === token.tokenId)?.exchangeRate,
+      [`${token.tokenSymbol}:${token.tokenId} G/L`]: currentTokenTransfers?.decimalAmount,
+      [`${token.tokenSymbol}:${token.tokenId} Exchange Rate`]: currentTokenTransfers?.exchangeRate ?? "",
+      [`${token.tokenSymbol}:${token.tokenId} G/L (USD)`]: currentTokenTransfers?.exchangeRate
+        ? currentTokenTransfers.decimalAmount * currentTokenTransfers.exchangeRate
+        : "",
     };
   }, {});
 }
@@ -40,7 +44,7 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
 function writeStakingRewardColumns(stakingStrategy: StakingRewardStrategy, i: LoadedTransaction) {
   return stakingStrategy.strategy === "omit"
     ? undefined
-    : { "Hbar Staking Reward": i.stakingReward, "Staking Reward USD": i.stakingReward * i.exchangeRate };
+    : { "Hbar Staking Reward": i.stakingReward, "Staking Reward (USD)": i.stakingReward * i.exchangeRate };
 }
 
 function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers: LoadedTokenTransfer[]) {
@@ -54,7 +58,8 @@ function writeFungibleTokenColumns(tokenStrategy: TokenStrategy, tokenTransfers:
         "Token Name": tokenTransfers.map((t) => t.tokenName).join(", "),
         "Token Symbol": tokenTransfers.map((t) => t.tokenSymbol).join(", "),
         "Token G/L": tokenTransfers.map((t) => t.decimalAmount).join(", "),
-        "Token Exchange Rate": tokenTransfers.map((t) => t.exchangeRate).join(", "),
+        "Token Exchange Rate": tokenTransfers.map((t) => t.exchangeRate ?? "").join(", "),
+        "Token G/L (USD)": tokenTransfers.map((t) => (t.exchangeRate === null ? "" : t.decimalAmount * t.exchangeRate)).join(", "),
       };
     case "column":
       return handleColumnStrategy(tokenStrategy, tokenTransfers);
@@ -106,9 +111,9 @@ export function writeCsv(
       Date: i.timestamp.toLocaleString().replaceAll(",", ""),
       Memo: i.memo.replaceAll("\n", ""),
       "Hbar G/L": i.hbarTransfer,
-      "Sales Proceed": usd > 0 ? usd : 0,
-      "Cost Basis": usd < 0 ? usd : 0,
-      "G/L": usd,
+      "Sales Proceed (USD)": usd > 0 ? usd : 0,
+      "Cost Basis (USD)": usd < 0 ? usd : 0,
+      "G/L (USD)": usd,
       ...writeStakingRewardColumns(stakingStrategy, i),
       "Hbar From Accounts": i.hbarFromAccount.join(","),
       "Hbar To Accounts": i.hbarToAccount.join(","),

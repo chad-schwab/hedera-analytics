@@ -66,7 +66,7 @@ export async function loadEachTransactionById(accountId: string, transactions: T
             serialNumber: t.serial_number,
             tokenName: re(tokenInfo.name),
             tokenSymbol: re(tokenInfo.symbol),
-            senderAccount: re(t.sender_account_id),
+            senderAccount: t.sender_account_id,
             receiverAccount: re(t.receiver_account_id),
             hbarAttribution: nftTransferHbarAttribution[i],
           };
@@ -90,7 +90,7 @@ export async function loadEachTransactionById(accountId: string, transactions: T
             .filter((t) => t.account === accountId)
             .map(async (t) => ({
               ...t,
-              exchangeRate: await getSaucerExchangeRate(t.tokenId, hederaTsToDate(re(transaction.consensus_timestamp))).then((r) => r.avg),
+              exchangeRate: await getSaucerExchangeRate(t.tokenId, hederaTsToDate(re(transaction.consensus_timestamp))),
             }))
         ),
         nftTransfers: nftTransfers.filter((t) => t.senderAccount === accountId || t.receiverAccount === accountId),

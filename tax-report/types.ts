@@ -13,13 +13,13 @@ export type LoadedTokenTransfer = {
   decimalAmount: number;
   tokenName: string;
   tokenSymbol: string;
-  exchangeRate: number;
+  exchangeRate: number | null;
 };
 export type LoadedNftTransfer = {
   tokenId: string;
   serialNumber: number;
   receiverAccount: string;
-  senderAccount: string;
+  senderAccount: string | undefined | null;
   tokenName: string;
   tokenSymbol: string;
   hbarAttribution: number;

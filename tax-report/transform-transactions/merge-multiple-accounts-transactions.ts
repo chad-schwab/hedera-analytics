@@ -11,7 +11,7 @@ function rekeyAccountTransactions(newAccountKey: string, accountTransactions: Re
       nftTransfers: t.nftTransfers.map((nt) => ({
         ...nt,
         receiverAccount: aggregateKeyReplacer(nt.receiverAccount),
-        senderAccount: aggregateKeyReplacer(nt.senderAccount),
+        senderAccount: nt.senderAccount ? aggregateKeyReplacer(nt.senderAccount) : nt.senderAccount,
       })),
     }));
   });

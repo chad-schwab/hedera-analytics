@@ -2,6 +2,8 @@ import retry from "async-retry";
 import Cache from "file-system-cache";
 
 import { createLogger } from "../logger";
+
+import { getNearestHourFromDate, getNearestHourFromUnixTimestamp } from "./get-nearest-hour";
 // load token prices using this endpoint: https://api.saucerswap.finance/tokens/prices/usd/<tokenId>?from=<unix ts>&to=<unix ts>&interval=HOUR
 // valid intervals
 // * FIVEMIN
@@ -11,20 +13,22 @@ import { createLogger } from "../logger";
 
 type CachedRate = {
   tokenId: string;
-  date: Date;
-  min: number;
-  max: number;
-  avg: number;
+  date: Date | string;
+  ratesByHour: Record<number, number>;
+  avgRate: number;
 };
 
 const logger = createLogger("get-saucer-exchange-rate");
 
 const rateCache = Cache({
   basePath: "./.cache",
-  ns: "saucer-exchange-rate",
+  ns: "saucer-exchange-rates",
 });
 
-export const getSaucerExchangeRate = async (tokenId: string, date: Date): Promise<CachedRate> => {
+// q: write a function to convert a unix timestamp to the closest hour (floor) as a number from 0-23
+// a: Math.floor(unixSeconds / 3600) % 24
+
+const loadRate = async (tokenId: string, date: Date): Promise<CachedRate> => {
   const startOfDay = new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   const cacheKey = `${tokenId}-${startOfDay.toISOString()}`;
   const cachedRate: CachedRate = await rateCache.get(cacheKey, null);
@@ -52,24 +56,35 @@ export const getSaucerExchangeRate = async (tokenId: string, date: Date): Promis
   );
 
   const loadedRate = ratesResponse.reduce(
-    (acc, rate, i) => {
-      const usdPrice = Number(rate.usdPrice);
-      if (usdPrice < acc.min) {
-        acc.min = usdPrice;
-      }
-      if (usdPrice > acc.max) {
-        acc.max = usdPrice;
-      }
-      acc.avg += usdPrice;
-      if (i === ratesResponse.length - 1) {
-        acc.avg /= ratesResponse.length;
-      }
+    (acc, rate) => {
+      const { timestampSeconds, usdPrice } = rate;
+      acc.ratesByHour[getNearestHourFromUnixTimestamp(timestampSeconds)] = usdPrice;
+      acc.avgRate += usdPrice;
+
       return acc;
     },
-    { tokenId, date: startOfDay, min: Infinity, max: 0, avg: 0 } satisfies CachedRate
+    { tokenId, date: startOfDay, ratesByHour: {}, avgRate: 0 } as CachedRate
   );
-
+  loadedRate.avgRate /= ratesResponse.length;
   rateCache.set(cacheKey, loadedRate);
 
   return loadedRate;
 };
+
+export async function getSaucerExchangeRate(tokenId: string, date: Date): Promise<number | null> {
+  const cachedRate = await loadRate(tokenId, date);
+
+  const hourlyRate = cachedRate.ratesByHour[getNearestHourFromDate(date)];
+  if (hourlyRate === undefined) {
+    const foundCount = Object.keys(cachedRate.ratesByHour).length;
+    if (foundCount === 0) {
+      logger.debug({ tokenId, date }, "No saucer swap exchange rate found.");
+      return null;
+    }
+    logger.debug({ tokenId, date, foundCount }, "No hourly saucer swap exchange rate found. Using daily average.");
+
+    return cachedRate.avgRate;
+  }
+
+  return hourlyRate;
+}

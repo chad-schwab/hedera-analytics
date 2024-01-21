@@ -11,7 +11,6 @@
 
 import { createLogger } from "../../logger";
 import { requireExistence as re } from "../existence-util";
-import { isHederaSystemAccount, tinyToHbar } from "../hedera-utils";
 import { TransactionByIdResponse } from "../types";
 
 import { calculateHbarGL } from "./calculate-hbar-gl";
@@ -46,8 +45,7 @@ export function calculateNftHbarAttributions(transaction: NonNullable<Transactio
   const hbarPriceAttributionFactor = totalHbarNftCosts === 0 ? 0 : netTransfer / totalHbarNftCosts;
   let nftTransferHbarAttribution = transactionNftTransfers.map((_, i) => estimatedNftHbarPrices[i] * hbarPriceAttributionFactor);
   // sanity check hbar attribution
-  const allFees = transaction.transfers?.filter((t) => t.amount > 0 && isHederaSystemAccount(t.account)).reduce((acc, t) => acc + t.amount, 0) ?? 0;
-  const sanityTolerance = tinyToHbar(allFees) * 2;
+  const sanityTolerance = 0.01;
   const hbarAttributionSum = nftTransferHbarAttribution.reduce((acc, t) => acc + t);
   if (Math.abs(hbarAttributionSum - netTransfer) > sanityTolerance) {
     logger.warn(
