@@ -1,5 +1,6 @@
 import { callMirror } from "lworks-client";
 import Cache from "file-system-cache";
+import retry from "async-retry";
 
 import { createLogger } from "../logger";
 
@@ -22,7 +23,12 @@ function getRate(er: ExchangeRate) {
 }
 
 async function getCachedRate(nearestMinute: number, rateField: "current_rate" | "next_rate") {
-  const cachedRate: ExchangeRateResponse = await exchangeRateCache.get(`${nearestMinute}`, null);
+  const cachedRate: ExchangeRateResponse = await retry(() => exchangeRateCache.get(`${nearestMinute}`, null), {
+    retries: 3,
+    onRetry: (err) => {
+      logger.debug({ err }, "Failed to get exchange rate from cache, retrying");
+    },
+  });
   const exchangeRate = cachedRate?.[rateField];
   if (exchangeRate) {
     return getRate(exchangeRate);

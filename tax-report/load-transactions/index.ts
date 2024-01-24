@@ -3,7 +3,7 @@ import { RawLoadedTransaction } from "../types";
 import { re } from "../existence-util";
 import { dateToHederaTs } from "../hedera-utils";
 
-import { loadTransactionsFromMirror } from "./load-transactions-from-mirror";
+import { PartialTransactionsLoadedError, loadTransactionsFromMirror } from "./load-transactions-from-mirror";
 import { getCachedTransactions, setCachedTransactions } from "./transaction-cache";
 
 export const logger = createLogger("load-transactions");
@@ -22,19 +22,27 @@ export async function loadAccountTransactions(account: string, dataStartDate: Da
   const archivedTransactions = await getCachedTransactions(account);
 
   let transactions = archivedTransactions || [];
-  if (transactions.length === 0) {
-    transactions = await loadTransactionsFromMirror(account, consensusStartTs, consensusEndTs);
-  } else {
-    const archiveStartTs = transactions[0].consensusTimestamp;
-    const archiveEndTs = re(transactions.at(-1))?.consensusTimestamp;
-    if (archiveStartTs > consensusStartTs) {
-      logger.debug({ account, startTs: consensusStartTs, endTs: archiveStartTs }, "Loading potential missing head transactions from mirror");
-      transactions = [...(await loadTransactionsFromMirror(account, consensusStartTs, archiveStartTs, { endTsExclusive: true })), ...transactions];
+  try {
+    if (transactions.length === 0) {
+      transactions = await loadTransactionsFromMirror(account, consensusStartTs, consensusEndTs);
+    } else {
+      const archiveStartTs = transactions[0].consensusTimestamp;
+      const archiveEndTs = re(transactions.at(-1))?.consensusTimestamp;
+      if (archiveStartTs > consensusStartTs) {
+        logger.debug({ account, startTs: consensusStartTs, endTs: archiveStartTs }, "Loading potential missing head transactions from mirror");
+        transactions = [...(await loadTransactionsFromMirror(account, consensusStartTs, archiveStartTs, { endTsExclusive: true })), ...transactions];
+      }
+      if (archiveEndTs < consensusEndTs) {
+        logger.debug({ account, startTs: archiveEndTs, endTs: consensusEndTs }, "Loading potential missing tail transactions from mirror");
+        transactions = [...transactions, ...(await loadTransactionsFromMirror(account, archiveEndTs, consensusEndTs, { startTsExclusive: true }))];
+      }
     }
-    if (archiveEndTs < consensusEndTs) {
-      logger.debug({ account, startTs: archiveEndTs, endTs: consensusEndTs }, "Loading potential missing tail transactions from mirror");
-      transactions = [...transactions, ...(await loadTransactionsFromMirror(account, archiveEndTs, consensusEndTs, { startTsExclusive: true }))];
+  } catch (err) {
+    if (err instanceof PartialTransactionsLoadedError) {
+      logger.info("Error loading all transactions. Updating transaction cache with partially loaded transactions before exit.");
+      await setCachedTransactions(account, [...transactions, ...err.loadedTransactions]);
     }
+    throw err;
   }
 
   if (transactions.length !== archivedTransactions?.length) {

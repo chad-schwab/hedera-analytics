@@ -8,10 +8,31 @@ import { loadEachTransactionById } from "./load-each-transaction-by-id";
 
 const logger = createLogger("load-transactions-from-mirror");
 
+export class PartialTransactionsLoadedError extends Error {
+  constructor(public readonly loadedTransactions: RawLoadedTransaction[]) {
+    super("Partial transactions loaded");
+  }
+}
+
 type LoadFromMirrorOptions = Partial<{
   startTsExclusive: boolean;
   endTsExclusive: boolean;
 }>;
+
+function trimTransactions(
+  loadedTransactions: RawLoadedTransaction[],
+  startTsExclusive: boolean | undefined,
+  startConsensusTs: string,
+  endTsExclusive: boolean | undefined,
+  endConsensusTs: string
+) {
+  if (startTsExclusive && loadedTransactions.at(0)?.consensusTimestamp === startConsensusTs) {
+    loadedTransactions.shift();
+  }
+  if (endTsExclusive && loadedTransactions.at(-1)?.consensusTimestamp === endConsensusTs) {
+    loadedTransactions.pop();
+  }
+}
 
 /**
  * Loads transactions for a specific account within a given time range.
@@ -30,27 +51,31 @@ export async function loadTransactionsFromMirror(
 ) {
   let next: string | undefined | null = `/api/v1/transactions?account.id=${account}&limit=25&order=asc&timestamp=gte:${startConsensusTs}`;
   let loadedTransactions: RawLoadedTransaction[] = [];
-  while (next) {
-    logger.debug(`loading transaction: ${next}`);
-    const { transactions, links }: TransactionsResponse = await callMirror<TransactionsResponse>(next);
-    if (transactions) {
-      const endTransactionIndex = transactions.findIndex((t) => re(t.consensus_timestamp) > endConsensusTs);
-      if (endTransactionIndex !== -1) {
-        const finalTransactions = transactions.slice(0, endTransactionIndex);
-        logger.debug(`Adding final transactions. Count: ${finalTransactions.length}`);
-        loadedTransactions = loadedTransactions.concat(await loadEachTransactionById(account, transactions.slice(0, endTransactionIndex)));
-        break;
+  try {
+    while (next) {
+      logger.debug(`loading transaction: ${next}`);
+      const { transactions, links }: TransactionsResponse = await callMirror<TransactionsResponse>(next);
+      if (transactions) {
+        const endTransactionIndex = transactions.findIndex((t) => re(t.consensus_timestamp) > endConsensusTs);
+        if (endTransactionIndex !== -1) {
+          const finalTransactions = transactions.slice(0, endTransactionIndex);
+          logger.debug(`Adding final transactions. Count: ${finalTransactions.length}`);
+          loadedTransactions = loadedTransactions.concat(await loadEachTransactionById(account, transactions.slice(0, endTransactionIndex)));
+          break;
+        }
+        loadedTransactions = loadedTransactions.concat(await loadEachTransactionById(account, transactions));
       }
-      loadedTransactions = loadedTransactions.concat(await loadEachTransactionById(account, transactions));
+      next = links?.next;
     }
-    next = links?.next;
+  } catch (err) {
+    logger.error({ err }, "Failed to load transactions from mirror");
+    trimTransactions(loadedTransactions, startTsExclusive, startConsensusTs, endTsExclusive, endConsensusTs);
+    if (loadedTransactions.length > 0) {
+      throw new PartialTransactionsLoadedError(loadedTransactions);
+    }
+    throw err;
   }
 
-  if (startTsExclusive && loadedTransactions.at(0)?.consensusTimestamp === startConsensusTs) {
-    loadedTransactions.shift();
-  }
-  if (endTsExclusive && loadedTransactions.at(-1)?.consensusTimestamp === endConsensusTs) {
-    loadedTransactions.pop();
-  }
+  trimTransactions(loadedTransactions, startTsExclusive, startConsensusTs, endTsExclusive, endConsensusTs);
   return loadedTransactions;
 }
