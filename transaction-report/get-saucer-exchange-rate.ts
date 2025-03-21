@@ -28,7 +28,7 @@ const rateCache = Cache({
 // q: write a function to convert a unix timestamp to the closest hour (floor) as a number from 0-23
 // a: Math.floor(unixSeconds / 3600) % 24
 
-const loadRate = async (tokenId: string, date: Date): Promise<CachedRate> => {
+const loadRate = async (tokenId: string, date: Date): Promise<CachedRate | null> => {
   const startOfDay = new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   const cacheKey = `${tokenId}-${startOfDay.toISOString()}`;
   const cachedRate: CachedRate = await rateCache.get(cacheKey, null);
@@ -37,43 +37,59 @@ const loadRate = async (tokenId: string, date: Date): Promise<CachedRate> => {
     return cachedRate;
   }
 
-  const startDayUnix = startOfDay.getTime() / 1000;
-  const endDayUnix = startDayUnix + 86400 - 1;
+  let startDayUnix = startOfDay.getTime() / 1000;
+  let endDayUnix = startDayUnix + 86400 - 1;
 
-  const ratesResponse: { usdPrice: number; timestampSeconds: number }[] = await retry(
-    async () => {
-      const response = await fetch(`https://api.saucerswap.finance/tokens/prices/usd/${tokenId}?from=${startDayUnix}&to=${endDayUnix}&interval=HOUR`);
-      if (!response.ok) {
-        throw new Error(`Failed to load exchange rate for ${tokenId} on ${startOfDay}`);
+  try {
+    const ratesResponse: { usdPrice: number; timestampSeconds: number }[] = await retry(
+      async () => {
+        const response = await fetch(
+          `https://api.saucerswap.finance/tokens/prices/usd/${tokenId}?from=${startDayUnix}&to=${endDayUnix}&interval=HOUR`
+        );
+        if (!response.ok) {
+          throw new Error(`Failed to load exchange rate for ${tokenId} on ${startOfDay}`);
+        }
+        if (response.status === 404) {
+          logger.warn({ tokenId, startOfDay }, `No saucer swap exchange rate found, ${response.status}`);
+          return [];
+        }
+        return response.json();
+      },
+      {
+        retries: 2,
+        onRetry: (err, attempt) => {
+          startDayUnix -= 86400 / 2;
+          endDayUnix += 86400 / 2;
+          logger.warn({ err, attempt }, "Failed to load saucer exchange rate, retrying with wider range");
+        },
       }
-      if (response.status === 404) {
-        logger.warn({ tokenId, startOfDay }, `No saucer swap exchange rate found, ${response.status}`);
-        return [];
-      }
-      return response.json();
-    },
-    { retries: 5, minTimeout: 500, onRetry: (err) => logger.warn({ err }, "Failed to load saucer exchange rate, retrying") }
-  );
+    );
+    const loadedRate = ratesResponse.reduce(
+      (acc, rate) => {
+        const { timestampSeconds, usdPrice } = rate;
+        acc.ratesByHour[getNearestHourFromUnixTimestamp(timestampSeconds)] = usdPrice;
+        acc.avgRate += usdPrice;
 
-  const loadedRate = ratesResponse.reduce(
-    (acc, rate) => {
-      const { timestampSeconds, usdPrice } = rate;
-      acc.ratesByHour[getNearestHourFromUnixTimestamp(timestampSeconds)] = usdPrice;
-      acc.avgRate += usdPrice;
+        return acc;
+      },
+      { tokenId, date: startOfDay, ratesByHour: {}, avgRate: 0 } as CachedRate
+    );
+    loadedRate.avgRate /= ratesResponse.length;
+    rateCache.set(cacheKey, loadedRate);
 
-      return acc;
-    },
-    { tokenId, date: startOfDay, ratesByHour: {}, avgRate: 0 } as CachedRate
-  );
-  loadedRate.avgRate /= ratesResponse.length;
-  rateCache.set(cacheKey, loadedRate);
-
-  return loadedRate;
+    return loadedRate;
+  } catch (e) {
+    logger.error({ tokenId, startOfDay }, "Failed to load saucer exchange rate");
+    return null;
+  }
 };
 
 export async function getSaucerExchangeRate(tokenId: string, date: Date): Promise<number | null> {
   const cachedRate = await loadRate(tokenId, date);
 
+  if (!cachedRate) {
+    return null;
+  }
   const hourlyRate = cachedRate.ratesByHour[getNearestHourFromDate(date)];
   if (hourlyRate === undefined) {
     const foundCount = Object.keys(cachedRate.ratesByHour).length;

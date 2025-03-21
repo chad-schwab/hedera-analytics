@@ -8,7 +8,7 @@ import { LoadedTokenTransfer, LoadedTransaction } from "../types";
 const logger = createLogger("write-csv");
 
 type ColumnTokenStrategy = { strategy: "column"; allTokens: { tokenId: string; tokenSymbol: string }[]; targetTokenId?: string };
-export type TokenStrategy = { strategy: "omit" } | { strategy: "join" } | ColumnTokenStrategy;
+export type TokenStrategy = { strategy: "omit" } | { strategy: "join" } | { strategy: "split" } | ColumnTokenStrategy;
 export type NftStrategy = { strategy: "omit" } | { strategy: "include" };
 export type MetaStrategy = { strategy: "omit" } | { strategy: "include" };
 export type StakingRewardStrategy = { strategy: "omit" } | { strategy: "include" };
@@ -28,6 +28,7 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
       allTokens = [foundTargetToken, ...allTokens.filter((t) => t.tokenId !== tokenStrategy.targetTokenId)];
     }
   }
+
   return allTokens.reduce((agg, token) => {
     const currentTokenTransfers = tokenTransfers.find((t) => t.tokenId === token.tokenId);
     return {
@@ -104,10 +105,14 @@ export function writeCsv(
   }: CsvOptions = {}
 ): Promise<void> {
   const transformedItems = transactions.map((i) => {
-    const { transactionId } = i;
+    const { transactionId, consensusTimestamp } = i;
     const usd = i.hbarTransfer * i.exchangeRate;
+    const nftData = writeNftColumns(nftStrategy, i, accountId);
+    const { NFT, ...restNftData } = nftData ?? {};
+
     return {
       Year: i.timestamp.getFullYear(),
+      ...(NFT ? { NFT } : {}),
       Date: i.timestamp.toLocaleString().replaceAll(",", ""),
       Memo: i.memo.replaceAll("\n", ""),
       "Hbar G/L": i.hbarTransfer,
@@ -118,8 +123,9 @@ export function writeCsv(
       "Hbar From Accounts": i.hbarFromAccount.join(","),
       "Hbar To Accounts": i.hbarToAccount.join(","),
       ...writeFungibleTokenColumns(tokenStrategy, i.tokenTransfers),
-      ...writeNftColumns(nftStrategy, i, accountId),
-      explore: `https://explore.lworks.io/mainnet/transactions/${transactionId}`,
+      ...restNftData,
+      explore: `https://hashscan.io/mainnet/transaction/${consensusTimestamp}`,
+      transactionId,
       ...writeMetaColumns(metaStrategy, i),
       UTC: i.timestamp.toISOString(),
     };

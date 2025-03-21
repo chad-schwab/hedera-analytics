@@ -1,7 +1,7 @@
 import { mkdir, rmdir } from "node:fs/promises";
 import path from "node:path";
 
-const baseDir = path.join(__dirname, "..", "output", "tax-report");
+const baseDir = path.join(__dirname, "..", "output", "transaction-report");
 
 export function getOutputBase(year: number, account: string): string {
   return path.join(baseDir, year.toString(), account, new Date().toISOString().slice(0, 10));

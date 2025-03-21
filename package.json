@@ -8,7 +8,7 @@
     "lint:eslint": "eslint --ext .js,.ts ${PROJECT:-./}",
     "lint:tsc": "tsc --project tsconfig-ci-lint.json",
     "lint:prettier": "prettier --check .",
-    "tax-report": "node -r esbuild-runner/register tax-report/program.ts"
+    "transaction-report": "node -r esbuild-runner/register transaction-report/program.ts"
   },
   "author": "",
   "license": "UNLICENSED",

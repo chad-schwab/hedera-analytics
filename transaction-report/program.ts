@@ -11,9 +11,9 @@ import { writeTransformedTransactions } from "./write-transaction-report";
 dotenv.config();
 // https://server.saucerswap.finance/api/public/tokens/prices/0.0.2030869?interval=DAY&from=1653022800&to=1684584750
 
-program.name("tax-report").description("CLI to load transaction tax information").version("0.0.1");
+program.name("transaction-report").description("CLI to load transaction tax information").version("0.0.1");
 
-export const logger = createLogger("tax-report");
+export const logger = createLogger("transaction-report");
 
 configure({ environment: Environment.public, network: Network.Mainnet, disableTracking: true });
 
@@ -31,7 +31,7 @@ program
     const reportStartDate = new Date(`${year}-01-01T00:00:00.000Z`);
     const reportEndDate = new Date(`${year}-12-31T23:59:59.999Z`);
     const dataStartDate = options.overrideDataStart ?? new Date(`${year - 2}-01-01T00:00:00.000Z`);
-    logger.info({ accounts, reportStartDate, reportEndDate, dataStartDate }, "Running tax-report");
+    logger.info({ accounts, reportStartDate, reportEndDate, dataStartDate }, "Running transaction-report");
     try {
       const loadedTransactionData = await loadAccountsTransactions(accounts, dataStartDate, reportEndDate);
       const transformedData = await transformTransactions(loadedTransactionData, reportStartDate, reportEndDate);
