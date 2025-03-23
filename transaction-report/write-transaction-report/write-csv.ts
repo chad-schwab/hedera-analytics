@@ -25,6 +25,7 @@ function handleColumnStrategy(tokenStrategy: ColumnTokenStrategy, tokenTransfers
   if (tokenStrategy.targetTokenId) {
     const foundTargetToken = allTokens.find((t) => t.tokenId === tokenStrategy.targetTokenId);
     if (foundTargetToken) {
+      // Make sure target token is reported first
       allTokens = [foundTargetToken, ...allTokens.filter((t) => t.tokenId !== tokenStrategy.targetTokenId)];
     }
   }

@@ -52,7 +52,8 @@ export async function transformTransactions(
       transactions.filter(isInTaxYear).find(
         (t1) =>
           // Did we send tokens and did we get paid for it
-          t1.tokenTransfers.find((t2) => t2.tokenId === tokenId && t2.decimalAmount < 0) && t1.hbarTransfer > 1
+          t1.tokenTransfers.find((t2) => t2.tokenId === tokenId && t2.decimalAmount < 0) &&
+          (t1.hbarTransfer > 1 || t1.tokenTransfers.some((t2) => t2.decimalAmount > 0 && t2.tokenId !== tokenId))
       )
     )
     .sort((t1, t2) => t1.tokenSymbol.localeCompare(t2.tokenSymbol));
